@@ -20,7 +20,7 @@ function log(message) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-const signalingUrl = "ws://31.97.32.221:3001/ws";
+const signalingUrl = "ws://31.97.32.221:5005/ws";
 let ws;
 let roomId = null;
 let peers = new Map();
