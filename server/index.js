@@ -11,7 +11,7 @@ const { v4: uuidv4 } = require("uuid");
  * @returns {{ httpServer: import('http').Server, wss: import('ws').WebSocketServer }}
  */
 function start(options = {}) {
-  const port = options.port || 3001;
+  const port = options.port || 5005;
 
   const app = express();
   app.use(express.json());
