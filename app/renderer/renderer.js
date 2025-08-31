@@ -1,17 +1,18 @@
-const logEl = document.getElementById('log');
-const statusEl = document.getElementById('status');
-const peersCountEl = document.getElementById('peersCount');
-const currentRoomEl = document.getElementById('currentRoom');
-const remoteVideo = document.getElementById('remoteVideo');
-const overlay = document.getElementById('overlay');
+const logEl = document.getElementById("log");
+const statusEl = document.getElementById("status");
+const peersCountEl = document.getElementById("peersCount");
+const currentRoomEl = document.getElementById("currentRoom");
+const remoteVideo = document.getElementById("remoteVideo");
+const overlay = document.getElementById("overlay");
 
-const btnCreate = document.getElementById('btnCreate');
-const btnJoin = document.getElementById('btnJoin');
-const btnShare = document.getElementById('btnShare');
-const btnCopyPull = document.getElementById('btnCopyPull');
-const btnCopyPush = document.getElementById('btnCopyPush');
-const btnSendFile = document.getElementById('btnSendFile');
-const roomIdInput = document.getElementById('roomId');
+const btnCreate = document.getElementById("btnCreate");
+const btnJoin = document.getElementById("btnJoin");
+const btnShare = document.getElementById("btnShare");
+const btnControl = document.getElementById("btnControl");
+const btnCopyPull = document.getElementById("btnCopyPull");
+const btnCopyPush = document.getElementById("btnCopyPush");
+const btnSendFile = document.getElementById("btnSendFile");
+const roomIdInput = document.getElementById("roomId");
 
 function log(message) {
   const now = new Date().toLocaleTimeString();
@@ -19,7 +20,7 @@ function log(message) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-const signalingUrl = 'ws://localhost:3001/ws';
+const signalingUrl = "ws://localhost:3001/ws";
 let ws;
 let roomId = null;
 let peers = new Map();
@@ -32,7 +33,7 @@ let selfId = null;
 let incomingFile = {
   meta: null,
   chunks: [],
-  received: 0
+  received: 0,
 };
 
 // cursors state for multi-mouse overlay
@@ -49,46 +50,49 @@ function setStatus(text) {
 function ensureSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
   ws = new WebSocket(signalingUrl);
-  ws.onopen = () => log('Signaling connected');
-  ws.onclose = () => log('Signaling disconnected');
+  ws.onopen = () => log("Signaling connected");
+  ws.onclose = () => log("Signaling disconnected");
   ws.onmessage = onSignalMessage;
 }
 
 function onSignalMessage(event) {
   const msg = JSON.parse(event.data);
-  if (msg.type === 'welcome') {
+  if (msg.type === "welcome") {
     selfId = msg.peerId;
     log(`Your ID: ${selfId}`);
     return;
   }
-  if (msg.type === 'room-created') {
+  if (msg.type === "room-created") {
     roomId = msg.roomId;
     currentRoomEl.textContent = roomId;
     roomIdInput.value = roomId;
-    setStatus('Room created');
+    setStatus("Room created");
     return;
   }
-  if (msg.type === 'room-joined') {
-    setStatus('Joined room');
+  if (msg.type === "room-joined") {
+    setStatus("Joined room");
     return;
   }
-  if (msg.type === 'peer-joined') {
+  if (msg.type === "peer-joined") {
     log(`Peer joined: ${msg.peerId}`);
     peers.set(msg.peerId, {});
     updatePeersCount();
     createPeerConnection(true, msg.peerId);
     return;
   }
-  if (msg.type === 'peer-left') {
+  if (msg.type === "peer-left") {
     const { peerId } = msg;
     log(`Peer left: ${peerId}`);
     peers.delete(peerId);
     const el = peerIdToCursorEl.get(peerId);
-    if (el) { el.remove(); peerIdToCursorEl.delete(peerId); }
+    if (el) {
+      el.remove();
+      peerIdToCursorEl.delete(peerId);
+    }
     updatePeersCount();
     return;
   }
-  if (msg.type === 'signal') {
+  if (msg.type === "signal") {
     const { from, to, payload } = msg;
     if (to && selfId && to !== selfId) return;
     let pc = peers.get(from)?.pc;
@@ -97,16 +101,22 @@ function onSignalMessage(event) {
     }
     if (payload.sdp) {
       pc.setRemoteDescription(payload).then(async () => {
-        if (payload.type === 'offer') {
+        if (payload.type === "offer") {
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          ws.send(JSON.stringify({ type: 'signal', to: from, payload: pc.localDescription }));
+          ws.send(
+            JSON.stringify({
+              type: "signal",
+              to: from,
+              payload: pc.localDescription,
+            })
+          );
         }
       });
     }
     return;
   }
-  if (msg.type === 'ice-candidate') {
+  if (msg.type === "ice-candidate") {
     const { from, to, payload } = msg;
     if (to && selfId && to !== selfId) return;
     const pc = peers.get(from)?.pc;
@@ -115,14 +125,14 @@ function onSignalMessage(event) {
     }
     return;
   }
-  if (msg.type === 'error') {
+  if (msg.type === "error") {
     log(`Error: ${msg.error}`);
   }
 }
 
 function createCursor(peerId) {
-  const el = document.createElement('div');
-  el.className = 'cursor';
+  const el = document.createElement("div");
+  el.className = "cursor";
   overlay.appendChild(el);
   peerIdToCursorEl.set(peerId, el);
   return el;
@@ -137,9 +147,7 @@ function updateCursor(peerId, x, y) {
 function createPeerConnection(isInitiator, peerId) {
   ensureSocket();
   const pc = new RTCPeerConnection({
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
-    ]
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
 
   peers.set(peerId, { pc });
@@ -147,7 +155,13 @@ function createPeerConnection(isInitiator, peerId) {
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
-      ws.send(JSON.stringify({ type: 'ice-candidate', to: peerId, payload: e.candidate }));
+      ws.send(
+        JSON.stringify({
+          type: "ice-candidate",
+          to: peerId,
+          payload: e.candidate,
+        })
+      );
     }
   };
 
@@ -163,11 +177,11 @@ function createPeerConnection(isInitiator, peerId) {
 
   let dc;
   if (isInitiator) {
-    dc = pc.createDataChannel('control');
+    dc = pc.createDataChannel("control");
     setupDataChannel(dc);
     pc.createOffer().then(async (offer) => {
       await pc.setLocalDescription(offer);
-      ws.send(JSON.stringify({ type: 'signal', to: peerId, payload: offer }));
+      ws.send(JSON.stringify({ type: "signal", to: peerId, payload: offer }));
     });
   } else {
     pc.ondatachannel = (e) => {
@@ -181,12 +195,13 @@ function createPeerConnection(isInitiator, peerId) {
 
 function setupDataChannel(dc) {
   dataChannel = dc;
-  dc.onopen = () => log('DataChannel open');
-  dc.onclose = () => log('DataChannel closed');
+  dc.onopen = () => log("DataChannel open");
+  dc.onclose = () => log("DataChannel closed");
   dc.onmessage = (e) => {
     // binary chunks for file transfer
     if (e.data instanceof ArrayBuffer || e.data instanceof Blob) {
-      const chunkPromise = e.data instanceof Blob ? e.data.arrayBuffer() : Promise.resolve(e.data);
+      const chunkPromise =
+        e.data instanceof Blob ? e.data.arrayBuffer() : Promise.resolve(e.data);
       chunkPromise.then((buf) => {
         const u8 = new Uint8Array(buf);
         incomingFile.chunks.push(u8);
@@ -196,17 +211,33 @@ function setupDataChannel(dc) {
     }
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'cursor') {
-        updateCursor(msg.from || 'peer', msg.x, msg.y);
-      } else if (msg.type === 'clipboard-text') {
-        lastReceivedClipboard = msg.text || '';
+      if (msg.type === "cursor") {
+        updateCursor(msg.from || "peer", msg.x, msg.y);
+      } else if (msg.type === "clipboard-text") {
+        lastReceivedClipboard = msg.text || "";
         window.electronAPI.writeClipboardText(lastReceivedClipboard);
-      } else if (msg.type === 'file-meta') {
+      } else if (msg.type === "mouse") {
+        if (
+          msg.action === "move" &&
+          typeof msg.x === "number" &&
+          typeof msg.y === "number"
+        ) {
+          window.electronAPI.simulateMouse({
+            type: "move",
+            x: msg.x,
+            y: msg.y,
+          });
+        } else if (msg.action === "down") {
+          window.electronAPI.simulateMouse({ type: "down" });
+        } else if (msg.action === "up") {
+          window.electronAPI.simulateMouse({ type: "up" });
+        }
+      } else if (msg.type === "file-meta") {
         incomingFile.meta = { name: msg.name, size: msg.size };
         incomingFile.chunks = [];
         incomingFile.received = 0;
         log(`Receiving file: ${msg.name} (${msg.size} bytes)`);
-      } else if (msg.type === 'file-end') {
+      } else if (msg.type === "file-end") {
         // assemble and save
         const total = incomingFile.received;
         const joined = new Uint8Array(total);
@@ -216,12 +247,14 @@ function setupDataChannel(dc) {
           offset += c.byteLength;
         }
         (async () => {
-          const savePath = await window.electronAPI.saveFileDialog(incomingFile.meta?.name || 'received.file');
+          const savePath = await window.electronAPI.saveFileDialog(
+            incomingFile.meta?.name || "received.file"
+          );
           if (savePath) {
             window.electronAPI.writeFile(savePath, joined);
             log(`Saved file to ${savePath}`);
           } else {
-            log('Save canceled');
+            log("Save canceled");
           }
         })();
         incomingFile = { meta: null, chunks: [], received: 0 };
@@ -230,22 +263,22 @@ function setupDataChannel(dc) {
   };
 
   // basic clipboard sync loop (text-only) with loop prevention
-  let lastSentClipboard = '';
-  let lastObservedClipboard = '';
+  let lastSentClipboard = "";
+  let lastObservedClipboard = "";
   window.setInterval(() => {
-    if (!dataChannel || dataChannel.readyState !== 'open') return;
+    if (!dataChannel || dataChannel.readyState !== "open") return;
     const text = window.electronAPI.readClipboardText();
     if (text !== lastObservedClipboard && text !== lastReceivedClipboard) {
       lastObservedClipboard = text;
       lastSentClipboard = text;
-      dataChannel.send(JSON.stringify({ type: 'clipboard-text', text }));
+      dataChannel.send(JSON.stringify({ type: "clipboard-text", text }));
     }
   }, 1000);
 }
 
 btnCreate.onclick = () => {
   ensureSocket();
-  ws.send(JSON.stringify({ type: 'create' }));
+  ws.send(JSON.stringify({ type: "create" }));
 };
 
 btnJoin.onclick = () => {
@@ -254,14 +287,15 @@ btnJoin.onclick = () => {
   if (!rid) return;
   roomId = rid;
   currentRoomEl.textContent = roomId;
-  ws.send(JSON.stringify({ type: 'join', roomId }));
+  ws.send(JSON.stringify({ type: "join", roomId }));
 };
 
 btnShare.onclick = async () => {
-  setStatus('Selecting source...');
+  setStatus("Selecting source...");
   const sources = await window.electronAPI.getDesktopSources();
   // naive pick first screen
-  const screen = sources.find(s => s.id.toLowerCase().includes('screen')) || sources[0];
+  const screen =
+    sources.find((s) => s.id.toLowerCase().includes("screen")) || sources[0];
   if (!screen) return;
   let stream;
   try {
@@ -269,14 +303,17 @@ btnShare.onclick = async () => {
       audio: false,
       video: {
         mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: screen.id
-        }
-      }
+          chromeMediaSource: "desktop",
+          chromeMediaSourceId: screen.id,
+        },
+      },
     });
   } catch (err) {
     // fallback
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: false,
+    });
   }
   localStream = stream;
   // renegotiate on existing PCs
@@ -285,31 +322,45 @@ btnShare.onclick = async () => {
       pc.addTrack(track, localStream);
     }
   }
-  setStatus('Sharing');
+  setStatus("Sharing");
 };
 
 // local cursor broadcast
-window.addEventListener('mousemove', (e) => {
-  if (!dataChannel || dataChannel.readyState !== 'open') return;
+window.addEventListener("mousemove", (e) => {
+  if (!dataChannel || dataChannel.readyState !== "open") return;
   const x = e.clientX / window.innerWidth;
   const y = e.clientY / window.innerHeight;
-  dataChannel.send(JSON.stringify({ type: 'cursor', x, y }));
+  dataChannel.send(JSON.stringify({ type: "cursor", x, y }));
 });
 
+btnControl.onclick = () => {
+  // demo: simulate local control event to remote
+  window.addEventListener(
+    "click",
+    () => {
+      if (!dataChannel || dataChannel.readyState !== "open") return;
+      dataChannel.send(JSON.stringify({ type: "mouse", action: "down" }));
+      dataChannel.send(JSON.stringify({ type: "mouse", action: "up" }));
+    },
+    { once: true }
+  );
+  log("Next click will be sent as remote mouse click");
+};
+
 btnCopyPull.onclick = async () => {
-  if (!dataChannel || dataChannel.readyState !== 'open') return;
+  if (!dataChannel || dataChannel.readyState !== "open") return;
   // request remote clipboard (simple demo: rely on background sync in future)
-  log('Pulling clipboard not implemented; use push for demo');
+  log("Pulling clipboard not implemented; use push for demo");
 };
 
 btnCopyPush.onclick = async () => {
-  if (!dataChannel || dataChannel.readyState !== 'open') return;
+  if (!dataChannel || dataChannel.readyState !== "open") return;
   const text = window.electronAPI.readClipboardText();
-  dataChannel.send(JSON.stringify({ type: 'clipboard-text', text }));
+  dataChannel.send(JSON.stringify({ type: "clipboard-text", text }));
 };
 
 btnSendFile.onclick = async () => {
-  if (!dataChannel || dataChannel.readyState !== 'open') return;
+  if (!dataChannel || dataChannel.readyState !== "open") return;
   const filePath = await window.electronAPI.openFileDialog();
   if (!filePath) return;
   try {
@@ -317,21 +368,28 @@ btnSendFile.onclick = async () => {
     const chunkSize = 16 * 1024;
     const total = buf.length;
     let offset = 0;
-    dataChannel.send(JSON.stringify({ type: 'file-meta', name: filePath.split(/\\\\|\//).pop(), size: total }));
+    dataChannel.send(
+      JSON.stringify({
+        type: "file-meta",
+        name: filePath.split(/\\\\|\//).pop(),
+        size: total,
+      })
+    );
     while (offset < total) {
       const end = Math.min(offset + chunkSize, total);
       const chunk = buf.slice(offset, end);
       // ensure ArrayBuffer for cross-browser compat
-      const ab = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
+      const ab = chunk.buffer.slice(
+        chunk.byteOffset,
+        chunk.byteOffset + chunk.byteLength
+      );
       dataChannel.send(ab);
       offset = end;
       // yield to avoid blocking
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
     }
-    dataChannel.send(JSON.stringify({ type: 'file-end' }));
+    dataChannel.send(JSON.stringify({ type: "file-end" }));
   } catch (err) {
-    log('File send error');
+    log("File send error");
   }
 };
-
-

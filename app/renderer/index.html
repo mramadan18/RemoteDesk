@@ -1,18 +1,60 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: http: https:;"
+    />
     <title>RemoteDesk</title>
     <style>
-      body { font-family: system-ui, Arial; margin: 0; display: flex; height: 100vh; }
-      #sidebar { width: 300px; border-right: 1px solid #ddd; padding: 12px; box-sizing: border-box; }
-      #content { flex: 1; display: flex; flex-direction: column; }
-      header { padding: 8px 12px; border-bottom: 1px solid #eee; display:flex; gap:8px; }
-      video { width: 100%; height: calc(100vh - 60px); background: #000; }
-      .input-row { display:flex; gap:6px; align-items: center; margin: 6px 0; }
-      #overlay { position: fixed; inset: 0; pointer-events: none; }
-      .cursor { position: absolute; width: 14px; height: 14px; border: 2px solid #3b82f6; border-radius: 50%; transform: translate(-50%, -50%); }
+      body {
+        font-family: system-ui, Arial;
+        margin: 0;
+        display: flex;
+        height: 100vh;
+      }
+      #sidebar {
+        width: 300px;
+        border-right: 1px solid #ddd;
+        padding: 12px;
+        box-sizing: border-box;
+      }
+      #content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 8px 12px;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        gap: 8px;
+      }
+      video {
+        width: 100%;
+        height: calc(100vh - 60px);
+        background: #000;
+      }
+      .input-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin: 6px 0;
+      }
+      #overlay {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+      .cursor {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        border: 2px solid #3b82f6;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+      }
     </style>
   </head>
   <body>
@@ -22,11 +64,14 @@
         <button id="btnCreate">Create Session</button>
       </div>
       <div class="input-row">
-        <input id="roomId" placeholder="Room ID" style="flex:1" />
+        <input id="roomId" placeholder="Room ID" style="flex: 1" />
         <button id="btnJoin">Join</button>
       </div>
       <div class="input-row">
         <button id="btnShare">Share Screen</button>
+      </div>
+      <div class="input-row">
+        <button id="btnControl">Control Remote</button>
       </div>
       <div class="input-row">
         <button id="btnCopyPull">Pull Clipboard</button>
@@ -42,7 +87,7 @@
         <div>Peers: <span id="peersCount">0</span></div>
       </div>
       <div class="input-row">
-        <div id="log" style="font-size:12px; white-space: pre-wrap;"></div>
+        <div id="log" style="font-size: 12px; white-space: pre-wrap"></div>
       </div>
     </div>
     <div id="content">
@@ -54,6 +99,4 @@
     <div id="overlay"></div>
     <script src="./renderer.js"></script>
   </body>
-  </html>
-
-
+</html>
