@@ -150,29 +150,30 @@ class RemoteDeskApp {
         this.handleRemoteStream(event.streams[0]);
       };
 
-      // Get screen sharing stream
+      // Get screen sharing stream using Electron API
       let stream;
       try {
-        // Check if screen sharing is supported
-        if (
-          !navigator.mediaDevices ||
-          !navigator.mediaDevices.getDisplayMedia
-        ) {
-          throw new Error("Screen sharing is not supported in this browser");
-        }
-
         console.log("Requesting screen sharing...");
         this.updateConnectionStatus("Requesting screen sharing permission...");
 
-        // Use getDisplayMedia with proper constraints
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            mediaSource: "screen",
-            width: { ideal: 1920, max: 1920 },
-            height: { ideal: 1080, max: 1080 },
-            frameRate: { ideal: 30, max: 30 },
-          },
+        // Get screen source info from Electron main process
+        const sourceInfo = await window.electronAPI.getScreenSourceInfo();
+        console.log("Got screen source:", sourceInfo);
+
+        // Use Electron-specific constraints for desktop capture
+        stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: "desktop",
+              chromeMediaSourceId: sourceInfo.id,
+              minWidth: 1280,
+              maxWidth: 1920,
+              minHeight: 720,
+              maxHeight: 1080,
+              maxFrameRate: 30,
+            },
+          },
         });
 
         console.log("Successfully got screen sharing stream");
@@ -333,9 +334,15 @@ class RemoteDeskApp {
   }
 
   isScreenSharingSupported() {
-    // Check if the browser supports getDisplayMedia
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      console.error("getDisplayMedia not supported");
+    // Check if we're running in Electron
+    if (!window.electronAPI || !window.electronAPI.getScreenSourceInfo) {
+      console.error("Electron screen sharing API not available");
+      return false;
+    }
+
+    // Check if mediaDevices API is available
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error("getUserMedia not supported");
       return false;
     }
 
@@ -497,22 +504,42 @@ class RemoteDeskApp {
 function copyUserId() {
   const userId = document.getElementById("userId").textContent;
   if (userId && userId !== "Loading...") {
-    navigator.clipboard
-      .writeText(userId)
-      .then(() => {
+    // Use Electron's clipboard API for better compatibility
+    if (window.electronAPI && window.electronAPI.clipboard) {
+      try {
+        window.electronAPI.clipboard.writeText(userId);
         showCopyNotification();
-      })
-      .catch((err) => {
-        console.error("Failed to copy ID:", err);
-        // Fallback for older browsers
-        const textArea = document.createElement("textarea");
-        textArea.value = userId;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textArea);
-        showCopyNotification();
-      });
+      } catch (err) {
+        console.error("Failed to copy ID using Electron API:", err);
+        fallbackCopy(userId);
+      }
+    } else {
+      // Fallback to browser clipboard API
+      navigator.clipboard
+        .writeText(userId)
+        .then(() => {
+          showCopyNotification();
+        })
+        .catch((err) => {
+          console.error("Failed to copy ID:", err);
+          fallbackCopy(userId);
+        });
+    }
+  }
+}
+
+// Fallback copy method
+function fallbackCopy(text) {
+  try {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textArea);
+    showCopyNotification();
+  } catch (err) {
+    console.error("Fallback copy failed:", err);
   }
 }
 

@@ -75,6 +75,43 @@ ipcMain.handle("get-desktop-capturer-sources", async () => {
   }
 });
 
+// Handle screen sharing stream creation (returns source info for renderer to use)
+ipcMain.handle("get-screen-source-info", async (event, sourceId) => {
+  try {
+    // Use Electron's desktopCapturer to get screen sources
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+
+    // Find the requested source or return the first available screen
+    let source;
+    if (sourceId) {
+      source = sources.find((s) => s.id === sourceId);
+    } else {
+      source = sources.find(
+        (s) =>
+          s.name.toLowerCase().includes("screen") ||
+          s.name.toLowerCase().includes("display")
+      );
+      if (!source) source = sources[0]; // Fallback to first source
+    }
+
+    if (!source) {
+      throw new Error("No screen source available");
+    }
+
+    return {
+      id: source.id,
+      name: source.name,
+      display_id: source.display_id,
+    };
+  } catch (error) {
+    console.error("Error getting screen source info:", error);
+    throw error;
+  }
+});
+
 // Handle permission requests
 app.on("web-contents-created", (event, contents) => {
   contents.session.setPermissionRequestHandler(
