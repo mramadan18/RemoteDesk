@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, clipboard } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -11,12 +11,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onConnectionEstablished: (callback) =>
     ipcRenderer.on("connection-established", callback),
   removeAllListeners: (event) => ipcRenderer.removeAllListeners(event),
-  // Clipboard API for secure clipboard access
+  // Clipboard API using IPC for secure access
   clipboard: {
-    writeText: (text) => clipboard.writeText(text),
-    readText: () => clipboard.readText(),
+    writeText: (text) => ipcRenderer.invoke("clipboard-write-text", text),
+    readText: () => ipcRenderer.invoke("clipboard-read-text"),
   },
   // Screen sharing API
   getScreenSourceInfo: (sourceId) =>
     ipcRenderer.invoke("get-screen-source-info", sourceId),
+  // Mouse control API
+  mouse: {
+    move: (x, y) => ipcRenderer.invoke("mouse-move", x, y),
+    click: (button, double) =>
+      ipcRenderer.invoke("mouse-click", button, double),
+    toggle: (button, down) => ipcRenderer.invoke("mouse-toggle", button, down),
+    scroll: (x, y) => ipcRenderer.invoke("mouse-scroll", x, y),
+  },
+  getScreenSize: () => ipcRenderer.invoke("get-screen-size"),
 });

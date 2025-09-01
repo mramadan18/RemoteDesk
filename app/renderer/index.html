@@ -105,6 +105,39 @@
         background: #2a5298;
       }
 
+      .mouse-control-button {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        margin-top: 10px;
+        margin-left: 10px;
+        transition: background 0.3s ease;
+      }
+
+      .mouse-control-button:hover {
+        background: #218838;
+      }
+
+      .mouse-control-button.active {
+        background: #dc3545;
+      }
+
+      .mouse-control-button.active:hover {
+        background: #c82333;
+      }
+
+      .control-buttons {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
       .instructions {
         margin-top: 15px;
         text-align: center;
@@ -244,9 +277,18 @@
       <div class="connection-status" id="connectionStatus">
         Waiting for connections...
       </div>
-      <button class="retry-button" id="retryButton" style="display: none">
-        🔄 Retry Connection
-      </button>
+      <div class="control-buttons">
+        <button class="retry-button" id="retryButton" style="display: none">
+          🔄 Retry Connection
+        </button>
+        <button
+          class="mouse-control-button"
+          id="mouseControlButton"
+          style="display: none"
+        >
+          🖱️ Enable Mouse Control
+        </button>
+      </div>
       <div class="instructions">
         <small
           >Share your ID with someone to let them connect, or press Ctrl+Shift+C

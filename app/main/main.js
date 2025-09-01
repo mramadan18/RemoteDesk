@@ -4,7 +4,9 @@ const {
   ipcMain,
   desktopCapturer,
   systemPreferences,
+  clipboard,
 } = require("electron");
+const { exec } = require("child_process");
 const path = require("path");
 
 let mainWindow;
@@ -109,6 +111,131 @@ ipcMain.handle("get-screen-source-info", async (event, sourceId) => {
   } catch (error) {
     console.error("Error getting screen source info:", error);
     throw error;
+  }
+});
+
+// Handle clipboard operations
+ipcMain.handle("clipboard-write-text", async (event, text) => {
+  try {
+    clipboard.writeText(text);
+    return true;
+  } catch (error) {
+    console.error("Error writing to clipboard:", error);
+    throw error;
+  }
+});
+
+ipcMain.handle("clipboard-read-text", async () => {
+  try {
+    return clipboard.readText();
+  } catch (error) {
+    console.error("Error reading from clipboard:", error);
+    throw error;
+  }
+});
+
+// Mouse control handlers using PowerShell
+function executePowerShellMouseCommand(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(__dirname, "../../mouse-control.ps1");
+    let command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}" -action ${action}`;
+
+    // Add parameters based on action
+    switch (action) {
+      case "move":
+        command += ` -x ${params.x} -y ${params.y}`;
+        break;
+      case "click":
+        command += ` -button ${params.button}`;
+        if (params.double) command += " -double";
+        break;
+      case "toggle":
+        command += ` -button ${params.button}`;
+        break;
+      case "scroll":
+        command += ` -x ${params.x} -y ${params.y}`;
+        break;
+    }
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`PowerShell error: ${error}`);
+        reject(error);
+        return;
+      }
+      if (stderr) {
+        console.error(`PowerShell stderr: ${stderr}`);
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
+
+ipcMain.handle("mouse-move", async (event, x, y) => {
+  try {
+    await executePowerShellMouseCommand("move", { x, y });
+    return true;
+  } catch (error) {
+    console.error("Error moving mouse:", error);
+    throw error;
+  }
+});
+
+ipcMain.handle(
+  "mouse-click",
+  async (event, button = "left", double = false) => {
+    try {
+      await executePowerShellMouseCommand("click", { button, double });
+      return true;
+    } catch (error) {
+      console.error("Error clicking mouse:", error);
+      throw error;
+    }
+  }
+);
+
+ipcMain.handle("mouse-toggle", async (event, button = "left", down) => {
+  try {
+    await executePowerShellMouseCommand("toggle", { button });
+    return true;
+  } catch (error) {
+    console.error("Error toggling mouse:", error);
+    throw error;
+  }
+});
+
+ipcMain.handle("mouse-scroll", async (event, x, y) => {
+  try {
+    await executePowerShellMouseCommand("scroll", { x, y });
+    return true;
+  } catch (error) {
+    console.error("Error scrolling mouse:", error);
+    throw error;
+  }
+});
+
+ipcMain.handle("get-screen-size", async () => {
+  try {
+    const result = await executePowerShellMouseCommand("screensize");
+    if (result) {
+      return JSON.parse(result);
+    }
+    // Fallback to Electron's screen API
+    const { screen } = require("electron");
+    const primaryDisplay = screen.getPrimaryDisplay();
+    return {
+      width: primaryDisplay.size.width,
+      height: primaryDisplay.size.height,
+    };
+  } catch (error) {
+    console.error("Error getting screen size:", error);
+    // Fallback to Electron's screen API
+    const { screen } = require("electron");
+    const primaryDisplay = screen.getPrimaryDisplay();
+    return {
+      width: primaryDisplay.size.width,
+      height: primaryDisplay.size.height,
+    };
   }
 });
 
