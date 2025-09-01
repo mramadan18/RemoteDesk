@@ -17,7 +17,9 @@ class RemoteDeskApp {
 
       // Check screen sharing support
       if (!this.isScreenSharingSupported()) {
-        this.updateConnectionStatus("⚠️ Screen sharing not supported in this environment");
+        this.updateConnectionStatus(
+          "⚠️ Screen sharing not supported in this environment"
+        );
         console.warn("Screen sharing not supported");
       } else {
         console.log("Screen sharing is supported");
@@ -152,7 +154,10 @@ class RemoteDeskApp {
       let stream;
       try {
         // Check if screen sharing is supported
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        if (
+          !navigator.mediaDevices ||
+          !navigator.mediaDevices.getDisplayMedia
+        ) {
           throw new Error("Screen sharing is not supported in this browser");
         }
 
@@ -162,10 +167,10 @@ class RemoteDeskApp {
         // Use getDisplayMedia with proper constraints
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: {
-            mediaSource: 'screen',
+            mediaSource: "screen",
             width: { ideal: 1920, max: 1920 },
             height: { ideal: 1080, max: 1080 },
-            frameRate: { ideal: 30, max: 30 }
+            frameRate: { ideal: 30, max: 30 },
           },
           audio: false,
         });
@@ -176,14 +181,14 @@ class RemoteDeskApp {
         if (!stream.getVideoTracks() || stream.getVideoTracks().length === 0) {
           throw new Error("No video track found in screen sharing stream");
         }
-
       } catch (mediaError) {
         console.error("Error getting media stream:", mediaError);
 
         // Provide more specific error messages
         let errorMessage = "Screen sharing failed: ";
         if (mediaError.name === "NotAllowedError") {
-          errorMessage += "Permission denied. Please allow screen sharing when prompted.";
+          errorMessage +=
+            "Permission denied. Please allow screen sharing when prompted.";
         } else if (mediaError.name === "NotFoundError") {
           errorMessage += "No screen found to share.";
         } else if (mediaError.name === "NotSupportedError") {
@@ -220,7 +225,8 @@ class RemoteDeskApp {
       if (error.message.includes("Screen sharing")) {
         userMessage = error.message; // Already formatted error message
       } else if (error.message.includes("Permission denied")) {
-        userMessage = "❌ Permission denied. Please allow screen sharing and try again.";
+        userMessage =
+          "❌ Permission denied. Please allow screen sharing and try again.";
       } else if (error.message.includes("network")) {
         userMessage = "❌ Network error. Check your connection and try again.";
       } else {
@@ -236,7 +242,7 @@ class RemoteDeskApp {
       }
 
       if (this.localStream) {
-        this.localStream.getTracks().forEach(track => track.stop());
+        this.localStream.getTracks().forEach((track) => track.stop());
         this.localStream = null;
       }
     }
@@ -315,7 +321,11 @@ class RemoteDeskApp {
     statusElement.textContent = status;
 
     // Show retry button for error states
-    if (status.includes("❌") || status.includes("failed") || status.includes("not supported")) {
+    if (
+      status.includes("❌") ||
+      status.includes("failed") ||
+      status.includes("not supported")
+    ) {
       retryButton.style.display = "inline-block";
     } else {
       retryButton.style.display = "none";
@@ -330,7 +340,7 @@ class RemoteDeskApp {
     }
 
     // Check if we're in a secure context (required for screen sharing)
-    if (!window.isSecureContext && location.protocol !== 'file:') {
+    if (!window.isSecureContext && location.protocol !== "file:") {
       console.error("Screen sharing requires a secure context (HTTPS)");
       return false;
     }
@@ -455,7 +465,7 @@ class RemoteDeskApp {
     }
 
     if (this.localStream) {
-      this.localStream.getTracks().forEach(track => track.stop());
+      this.localStream.getTracks().forEach((track) => track.stop());
       this.localStream = null;
     }
 

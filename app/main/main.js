@@ -1,4 +1,10 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, systemPreferences } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  desktopCapturer,
+  systemPreferences,
+} = require("electron");
 const path = require("path");
 
 let mainWindow;
@@ -60,7 +66,7 @@ ipcMain.handle("get-desktop-capturer-sources", async () => {
   try {
     const sources = await desktopCapturer.getSources({
       types: ["screen", "window"],
-      thumbnailSize: { width: 150, height: 150 }
+      thumbnailSize: { width: 150, height: 150 },
     });
     return sources;
   } catch (error) {
@@ -71,13 +77,15 @@ ipcMain.handle("get-desktop-capturer-sources", async () => {
 
 // Handle permission requests
 app.on("web-contents-created", (event, contents) => {
-  contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowedPermissions = ["media", "desktop-capture"];
+  contents.session.setPermissionRequestHandler(
+    (webContents, permission, callback) => {
+      const allowedPermissions = ["media", "desktop-capture"];
 
-    if (allowedPermissions.includes(permission)) {
-      callback(true);
-    } else {
-      callback(false);
+      if (allowedPermissions.includes(permission)) {
+        callback(true);
+      } else {
+        callback(false);
+      }
     }
-  });
+  );
 });
