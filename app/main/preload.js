@@ -13,12 +13,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         typeof event.x === "number" &&
         typeof event.y === "number"
       ) {
-        const { width, height } =
-          require("electron").screen.getPrimaryDisplay().workAreaSize;
-        robot.moveMouse(
-          Math.round(event.x * width),
-          Math.round(event.y * height)
-        );
+        // Use absolute screen coordinates directly (no scaling needed)
+        robot.moveMouse(event.x, event.y);
       } else if (event.type === "down" || event.type === "up") {
         robot.mouseToggle(event.type);
       }

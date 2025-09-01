@@ -130,8 +130,14 @@ function createCursor(peerId) {
 
 function updateCursor(peerId, x, y) {
   const el = peerIdToCursorEl.get(peerId) || createCursor(peerId);
-  el.style.left = `${x * window.innerWidth}px`;
-  el.style.top = `${y * window.innerHeight}px`;
+
+  // Convert absolute screen coordinates to relative position on video element
+  const rect = remoteVideo.getBoundingClientRect();
+  const relativeX = x / remoteVideo.videoWidth;
+  const relativeY = y / remoteVideo.videoHeight;
+
+  el.style.left = `${rect.left + relativeX * rect.width}px`;
+  el.style.top = `${rect.top + relativeY * rect.height}px`;
 }
 
 function createPeerConnection(isInitiator, peerId) {
@@ -239,7 +245,22 @@ btnJoin.onclick = () => {
   if (!rid) return;
   roomId = rid;
   currentRoomEl.textContent = roomId;
-  ws.send(JSON.stringify({ type: "join", roomId }));
+  // انتظر الاتصال ينجح
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "join", roomId }));
+  } else {
+    // لو لسه connecting، انتظر
+    const checkConnection = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "join", roomId }));
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        setTimeout(checkConnection, 100);
+      } else {
+        log("Failed to connect to signaling server");
+      }
+    };
+    setTimeout(checkConnection, 100);
+  }
 };
 
 btnShare.onclick = async () => {
@@ -280,17 +301,44 @@ btnShare.onclick = async () => {
 // local cursor broadcast
 window.addEventListener("mousemove", (e) => {
   if (!dataChannel || dataChannel.readyState !== "open") return;
-  const x = e.clientX / window.innerWidth;
-  const y = e.clientY / window.innerHeight;
-  dataChannel.send(JSON.stringify({ type: "cursor", x, y }));
+  // Send absolute screen coordinates instead of normalized window coordinates
+  const rect = remoteVideo.getBoundingClientRect();
+  const scaleX = remoteVideo.videoWidth / rect.width;
+  const scaleY = remoteVideo.videoHeight / rect.height;
+
+  // Calculate position relative to the video element
+  const relativeX = (e.clientX - rect.left) / rect.width;
+  const relativeY = (e.clientY - rect.top) / rect.height;
+
+  // Convert to screen coordinates of the remote machine
+  const screenX = Math.round(relativeX * remoteVideo.videoWidth);
+  const screenY = Math.round(relativeY * remoteVideo.videoHeight);
+
+  dataChannel.send(JSON.stringify({ type: "cursor", x: screenX, y: screenY }));
 });
 
 btnControl.onclick = () => {
   // demo: simulate local control event to remote
   window.addEventListener(
     "click",
-    () => {
+    (e) => {
       if (!dataChannel || dataChannel.readyState !== "open") return;
+
+      // Calculate screen coordinates for the click
+      const rect = remoteVideo.getBoundingClientRect();
+      const relativeX = (e.clientX - rect.left) / rect.width;
+      const relativeY = (e.clientY - rect.top) / rect.height;
+      const screenX = Math.round(relativeX * remoteVideo.videoWidth);
+      const screenY = Math.round(relativeY * remoteVideo.videoHeight);
+
+      dataChannel.send(
+        JSON.stringify({
+          type: "mouse",
+          action: "move",
+          x: screenX,
+          y: screenY,
+        })
+      );
       dataChannel.send(JSON.stringify({ type: "mouse", action: "down" }));
       dataChannel.send(JSON.stringify({ type: "mouse", action: "up" }));
     },
