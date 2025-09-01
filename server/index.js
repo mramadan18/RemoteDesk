@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require("uuid");
 /**
  * Starts the signaling server (Express + WebSocket)
  * @param {object} options
- * @param {number} [options.port=3001]
+ * @param {number} [options.port=5005]
  * @param {boolean} [options.probe=false] - If true, auto-stop shortly after start (for CI sanity checks)
  * @returns {{ httpServer: import('http').Server, wss: import('ws').WebSocketServer }}
  */
@@ -23,7 +23,8 @@ function start(options = {}) {
   const httpServer = http.createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-  const rooms = new Map(); // roomId -> Set<WebSocket>
+  const clients = new Map(); // userId -> WebSocket
+  const pendingConnections = new Map(); // targetUserId -> Set<sourceUserId>
 
   function send(ws, message) {
     try {
@@ -33,22 +34,16 @@ function start(options = {}) {
     }
   }
 
-  function broadcastToRoom(roomId, message, exclude) {
-    const clients = rooms.get(roomId);
-    if (!clients) return;
-    for (const client of clients) {
-      if (client !== exclude && client.readyState === 1) {
-        send(client, message);
-      }
-    }
+  function findClientByUserId(userId) {
+    return clients.get(userId);
   }
 
   wss.on("connection", (ws) => {
-    ws.id = uuidv4();
-    ws.roomId = null;
+    ws.peerId = uuidv4();
+    ws.userId = null;
 
-    // greet client with its assigned id
-    send(ws, { type: "welcome", peerId: ws.id });
+    // greet client with its assigned peer id
+    send(ws, { type: "welcome", peerId: ws.peerId });
 
     ws.on("message", (data) => {
       let msg;
@@ -58,91 +53,105 @@ function start(options = {}) {
         return;
       }
 
-      const { type, roomId, payload, to: targetId } = msg || {};
+      const { type, userId, targetUserId, payload, to: targetId } = msg || {};
 
-      if (type === "create") {
-        const newRoomId = uuidv4().slice(0, 8);
-        const set = new Set();
-        set.add(ws);
-        rooms.set(newRoomId, set);
-        ws.roomId = newRoomId;
-        send(ws, { type: "room-created", roomId: newRoomId });
+      // Register user with their user ID
+      if (type === "register") {
+        if (!userId) return;
+        ws.userId = userId;
+        clients.set(userId, ws);
+        console.log(`User ${userId} registered`);
+        send(ws, { type: "registered", userId });
         return;
       }
 
-      if (type === "join") {
-        if (!roomId || !rooms.has(roomId)) {
-          send(ws, { type: "error", error: "ROOM_NOT_FOUND" });
+      // Connect to another user by their ID
+      if (type === "connect") {
+        if (!targetUserId) {
+          send(ws, { type: "error", error: "TARGET_USER_ID_MISSING" });
           return;
         }
-        const set = rooms.get(roomId);
-        set.add(ws);
-        ws.roomId = roomId;
-        send(ws, { type: "room-joined", roomId });
-        // Notify others that a peer joined
-        broadcastToRoom(roomId, { type: "peer-joined", peerId: ws.id }, ws);
+
+        const targetClient = findClientByUserId(targetUserId);
+        if (!targetClient) {
+          send(ws, { type: "error", error: "USER_NOT_FOUND" });
+          return;
+        }
+
+        if (targetClient.readyState !== 1) {
+          send(ws, { type: "error", error: "USER_OFFLINE" });
+          return;
+        }
+
+        // Notify the target user that someone is connecting
+        send(targetClient, {
+          type: "peer-joined",
+          peerId: ws.peerId,
+          userId: ws.userId,
+        });
+
+        // Add to pending connections
+        if (!pendingConnections.has(targetUserId)) {
+          pendingConnections.set(targetUserId, new Set());
+        }
+        pendingConnections.get(targetUserId).add(ws.userId);
+
+        send(ws, { type: "connecting", targetUserId });
         return;
       }
 
+      // Handle WebRTC signaling
       if (type === "signal") {
-        if (!ws.roomId) return;
-        if (targetId) {
-          const clients = rooms.get(ws.roomId);
-          for (const client of clients || []) {
-            if (client.id === targetId && client.readyState === 1) {
-              send(client, {
-                type: "signal",
-                from: ws.id,
-                to: targetId,
-                payload,
-              });
-            }
-          }
-        } else {
-          broadcastToRoom(
-            ws.roomId,
-            { type: "signal", from: ws.id, payload },
-            ws
-          );
+        if (!targetId) return;
+
+        const targetClient = Array.from(clients.values()).find(
+          (client) => client.peerId === targetId
+        );
+        if (targetClient && targetClient.readyState === 1) {
+          send(targetClient, {
+            type: "signal",
+            from: ws.peerId,
+            to: targetId,
+            payload,
+          });
         }
         return;
       }
 
+      // Handle ICE candidates
       if (type === "ice-candidate") {
-        if (!ws.roomId) return;
-        if (targetId) {
-          const clients = rooms.get(ws.roomId);
-          for (const client of clients || []) {
-            if (client.id === targetId && client.readyState === 1) {
-              send(client, {
-                type: "ice-candidate",
-                from: ws.id,
-                to: targetId,
-                payload,
-              });
-            }
-          }
-        } else {
-          broadcastToRoom(
-            ws.roomId,
-            { type: "ice-candidate", from: ws.id, payload },
-            ws
-          );
+        if (!targetId) return;
+
+        const targetClient = Array.from(clients.values()).find(
+          (client) => client.peerId === targetId
+        );
+        if (targetClient && targetClient.readyState === 1) {
+          send(targetClient, {
+            type: "ice-candidate",
+            from: ws.peerId,
+            to: targetId,
+            payload,
+          });
         }
         return;
       }
     });
 
     ws.on("close", () => {
-      const { roomId } = ws;
-      if (!roomId) return;
-      const set = rooms.get(roomId);
-      if (!set) return;
-      set.delete(ws);
-      broadcastToRoom(roomId, { type: "peer-left", peerId: ws.id }, ws);
-      if (set.size === 0) {
-        rooms.delete(roomId);
+      // Clean up client registration
+      if (ws.userId) {
+        clients.delete(ws.userId);
+
+        // Clean up pending connections
+        for (const [targetId, sources] of pendingConnections) {
+          sources.delete(ws.userId);
+          if (sources.size === 0) {
+            pendingConnections.delete(targetId);
+          }
+        }
       }
+
+      console.log(`Client ${ws.userId || ws.peerId} disconnected`);
     });
   });
 

@@ -1,23 +1,33 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 
 let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 720,
+    width: 1000,
+    height: 700,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
       nodeIntegration: false,
+      contextIsolation: true,
+      enableRemoteModule: false,
+      preload: path.join(__dirname, "preload.js"),
     },
+    icon: path.join(__dirname, "../../assets/icon.png"), // Add icon later if needed
+    titleBarStyle: "default",
+    show: false,
   });
 
-  const startUrl =
-    process.env.ELECTRON_START_URL ||
-    `file://${path.join(__dirname, "../renderer/index.html")}`;
-  mainWindow.loadURL(startUrl);
+  mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+  });
+
+  // Open DevTools in development
+  if (process.env.NODE_ENV === "development") {
+    mainWindow.webContents.openDevTools();
+  }
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -38,18 +48,8 @@ app.on("activate", () => {
   }
 });
 
-// IPC: screen sources
-ipcMain.handle("desktop-capturer:get-sources", async (event, opts) => {
-  const sources = await desktopCapturer.getSources({
-    types: ["window", "screen"],
-    fetchWindowIcons: true,
-    thumbnailSize: { width: 200, height: 200 },
-    ...opts,
-  });
-  return sources.map((s) => ({
-    id: s.id,
-    name: s.name,
-    appIconDataUrl: s.appIcon ? s.appIcon.toDataURL() : null,
-    thumbnailDataUrl: s.thumbnail ? s.thumbnail.toDataURL() : null,
-  }));
+// IPC handlers for main process communication
+ipcMain.handle("get-user-id", () => {
+  // Return a persistent user ID (could be stored in a file or generated based on system info)
+  return require("crypto").randomBytes(4).toString("hex").toUpperCase();
 });

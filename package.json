@@ -6,7 +6,7 @@
   "scripts": {
     "server": "node server/index.js",
     "server:dev": "nodemon --watch server server/index.js",
-    "app": "wait-on tcp:3001 && electron .",
+    "app": "wait-on tcp:5005 && electron .",
     "dev": "concurrently -k -n server,app -c blue,green \"npm:server:dev\" \"npm:app\"",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
@@ -46,7 +46,7 @@
     },
     "win": {
       "target": [
-        "nsis"
+        "dir"
       ],
       "artifactName": "${productName}-Setup-${version}.${ext}"
     }

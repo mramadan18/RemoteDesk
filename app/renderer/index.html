@@ -1,96 +1,263 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: http: https:;"
-    />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RemoteDesk</title>
     <style>
-      body {
-        font-family: system-ui, Arial;
+      * {
         margin: 0;
-        display: flex;
-        height: 100vh;
-      }
-      #sidebar {
-        width: 300px;
-        border-right: 1px solid #ddd;
-        padding: 12px;
+        padding: 0;
         box-sizing: border-box;
       }
-      #content {
-        flex: 1;
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        color: white;
+        overflow: hidden;
+        height: 100vh;
         display: flex;
         flex-direction: column;
       }
-      header {
-        padding: 8px 12px;
-        border-bottom: 1px solid #eee;
-        display: flex;
-        gap: 8px;
+
+      .header {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        padding: 20px;
+        text-align: center;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
       }
-      video {
-        width: 100%;
-        height: calc(100vh - 60px);
-        background: #000;
+
+      .title {
+        font-size: 24px;
+        font-weight: 300;
+        margin-bottom: 10px;
       }
-      .input-row {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        margin: 6px 0;
+
+      .user-id-container {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 12px;
+        padding: 20px;
+        margin: 20px;
+        text-align: center;
+        border: 2px solid rgba(255, 255, 255, 0.3);
       }
-      #overlay {
+
+      .user-id-label {
+        font-size: 14px;
+        opacity: 0.8;
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .user-id {
+        font-size: 36px;
+        font-weight: bold;
+        font-family: "Courier New", monospace;
+        letter-spacing: 3px;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 15px 30px;
+        border-radius: 8px;
+        border: 2px solid rgba(255, 255, 255, 0.4);
+        display: inline-block;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .user-id:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: scale(1.05);
+      }
+
+      .status {
+        margin-top: 30px;
+        padding: 20px;
+        text-align: center;
+      }
+
+      .status-text {
+        font-size: 16px;
+        opacity: 0.9;
+      }
+
+      .connection-status {
+        margin-top: 10px;
+        font-size: 14px;
+        opacity: 0.7;
+      }
+
+      .instructions {
+        margin-top: 15px;
+        text-align: center;
+        opacity: 0.6;
+        font-size: 12px;
+        max-width: 400px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .copy-notification {
         position: fixed;
-        inset: 0;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 15px 30px;
+        border-radius: 8px;
+        font-size: 16px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
         pointer-events: none;
       }
-      .cursor {
-        position: absolute;
-        width: 14px;
-        height: 14px;
-        border: 2px solid #3b82f6;
-        border-radius: 50%;
-        transform: translate(-50%, -50%);
+
+      .copy-notification.show {
+        opacity: 1;
+      }
+
+      @media (max-width: 600px) {
+        .user-id {
+          font-size: 28px;
+          padding: 12px 20px;
+        }
+      }
+
+      /* Connect Dialog Styles */
+      .connect-dialog {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+
+      .connect-dialog.show {
+        display: flex;
+      }
+
+      .connect-dialog-content {
+        background: rgba(255, 255, 255, 0.95);
+        color: #333;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        min-width: 350px;
+        text-align: center;
+      }
+
+      .connect-dialog-content h3 {
+        margin: 0 0 20px 0;
+        font-size: 18px;
+        font-weight: 500;
+      }
+
+      .connect-dialog-content input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        font-size: 16px;
+        font-family: "Courier New", monospace;
+        letter-spacing: 2px;
+        text-align: center;
+        margin-bottom: 20px;
+        box-sizing: border-box;
+      }
+
+      .connect-dialog-content input:focus {
+        outline: none;
+        border-color: #1e3c72;
+        box-shadow: 0 0 0 3px rgba(30, 60, 114, 0.1);
+      }
+
+      .connect-dialog-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+      }
+
+      .connect-dialog-buttons button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        min-width: 80px;
+      }
+
+      #connectCancel {
+        background: #666;
+        color: white;
+      }
+
+      #connectCancel:hover {
+        background: #555;
+      }
+
+      #connectSubmit {
+        background: #1e3c72;
+        color: white;
+      }
+
+      #connectSubmit:hover {
+        background: #2a5298;
       }
     </style>
   </head>
   <body>
-    <div id="sidebar">
-      <h3>RemoteDesk</h3>
-      <div class="input-row">
-        <button id="btnCreate">Create Session</button>
-      </div>
-      <div class="input-row">
-        <input id="roomId" placeholder="Room ID" style="flex: 1" />
-        <button id="btnJoin">Join</button>
-      </div>
-      <div class="input-row">
-        <button id="btnShare">Share Screen</button>
-      </div>
-      <div class="input-row">
-        <button id="btnControl">Control Remote</button>
-      </div>
+    <div class="header">
+      <div class="title">RemoteDesk</div>
+    </div>
 
-      <div class="input-row">
-        <div>Room: <span id="currentRoom">-</span></div>
+    <div class="user-id-container">
+      <div class="user-id-label">Your Remote ID</div>
+      <div class="user-id" id="userId" onclick="copyUserId()">Loading...</div>
+    </div>
+
+    <div class="status">
+      <div class="status-text">Ready to accept remote connections</div>
+      <div class="connection-status" id="connectionStatus">
+        Waiting for connections...
       </div>
-      <div class="input-row">
-        <div>Peers: <span id="peersCount">0</span></div>
-      </div>
-      <div class="input-row">
-        <div id="log" style="font-size: 12px; white-space: pre-wrap"></div>
+      <div class="instructions">
+        <small
+          >Share your ID with someone to let them connect, or press Ctrl+Shift+C
+          to connect to another ID</small
+        >
       </div>
     </div>
-    <div id="content">
-      <header>
-        <span>Status: <b id="status">Idle</b></span>
-      </header>
-      <video id="remoteVideo" autoplay playsinline></video>
+
+    <div class="copy-notification" id="copyNotification">
+      ID copied to clipboard!
     </div>
-    <div id="overlay"></div>
-    <script src="./renderer.js"></script>
+
+    <!-- Connect Dialog -->
+    <div class="connect-dialog" id="connectDialog">
+      <div class="connect-dialog-content">
+        <h3>Connect to Remote ID</h3>
+        <input
+          type="text"
+          id="connectInput"
+          placeholder="Enter Remote ID (e.g., A1B2C3D4)"
+          maxlength="8"
+          style="text-transform: uppercase"
+        />
+        <div class="connect-dialog-buttons">
+          <button id="connectCancel">Cancel</button>
+          <button id="connectSubmit">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="renderer.js"></script>
   </body>
 </html>

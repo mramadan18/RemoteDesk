@@ -1,348 +1,379 @@
-const logEl = document.getElementById("log");
-const statusEl = document.getElementById("status");
-const peersCountEl = document.getElementById("peersCount");
-const currentRoomEl = document.getElementById("currentRoom");
-const remoteVideo = document.getElementById("remoteVideo");
-const overlay = document.getElementById("overlay");
+class RemoteDeskApp {
+  constructor() {
+    this.userId = null;
+    this.ws = null;
+    this.peerConnection = null;
+    this.isHost = true;
+    this.remoteVideo = null;
+    this.localStream = null;
 
-const btnCreate = document.getElementById("btnCreate");
-const btnJoin = document.getElementById("btnJoin");
-const btnShare = document.getElementById("btnShare");
-const btnControl = document.getElementById("btnControl");
-const roomIdInput = document.getElementById("roomId");
-
-function log(message) {
-  const now = new Date().toLocaleTimeString();
-  logEl.textContent += `\n[${now}] ${message}`;
-  logEl.scrollTop = logEl.scrollHeight;
-}
-
-const signalingUrl = "wss://remotedesk-production.up.railway.app/ws";
-let ws;
-let roomId = null;
-let peers = new Map();
-
-let localStream = null;
-let dataChannel = null;
-let selfId = null;
-
-// cursors state for multi-mouse overlay
-const peerIdToCursorEl = new Map();
-
-function updatePeersCount() {
-  peersCountEl.textContent = String(peers.size);
-}
-
-function setStatus(text) {
-  statusEl.textContent = text;
-}
-
-function ensureSocket() {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
-  ws = new WebSocket(signalingUrl);
-  ws.onopen = () => log("Signaling connected");
-  ws.onclose = () => log("Signaling disconnected");
-  ws.onmessage = onSignalMessage;
-}
-
-function onSignalMessage(event) {
-  const msg = JSON.parse(event.data);
-  if (msg.type === "welcome") {
-    selfId = msg.peerId;
-    log(`Your ID: ${selfId}`);
-    return;
+    this.init();
   }
-  if (msg.type === "room-created") {
-    roomId = msg.roomId;
-    currentRoomEl.textContent = roomId;
-    roomIdInput.value = roomId;
-    setStatus("Room created");
-    return;
-  }
-  if (msg.type === "room-joined") {
-    setStatus("Joined room");
-    return;
-  }
-  if (msg.type === "peer-joined") {
-    log(`Peer joined: ${msg.peerId}`);
-    peers.set(msg.peerId, {});
-    updatePeersCount();
-    createPeerConnection(true, msg.peerId);
-    return;
-  }
-  if (msg.type === "peer-left") {
-    const { peerId } = msg;
-    log(`Peer left: ${peerId}`);
-    peers.delete(peerId);
-    const el = peerIdToCursorEl.get(peerId);
-    if (el) {
-      el.remove();
-      peerIdToCursorEl.delete(peerId);
+
+  async init() {
+    try {
+      this.userId = await window.electronAPI.getUserId();
+      this.displayUserId();
+      this.connectToServer();
+      this.setupEventListeners();
+    } catch (error) {
+      console.error("Failed to initialize app:", error);
     }
-    updatePeersCount();
-    return;
   }
-  if (msg.type === "signal") {
-    const { from, to, payload } = msg;
-    if (to && selfId && to !== selfId) return;
-    let pc = peers.get(from)?.pc;
-    if (!pc) {
-      pc = createPeerConnection(false, from);
+
+  displayUserId() {
+    const userIdElement = document.getElementById("userId");
+    userIdElement.textContent = this.userId;
+    userIdElement.style.cursor = "pointer";
+  }
+
+  connectToServer() {
+    // Connect to the signaling server
+    this.ws = new WebSocket("wss://remotedesk-production.up.railway.app//ws");
+
+    this.ws.onopen = () => {
+      console.log("Connected to signaling server");
+      this.updateConnectionStatus("Connected to server");
+      // Register with our user ID
+      this.registerWithServer();
+    };
+
+    this.ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      this.handleMessage(message);
+    };
+
+    this.ws.onclose = () => {
+      console.log("Disconnected from signaling server");
+      this.updateConnectionStatus("Disconnected from server");
+      // Attempt to reconnect after 5 seconds
+      setTimeout(() => this.connectToServer(), 5000);
+    };
+
+    this.ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      this.updateConnectionStatus("Connection error");
+    };
+  }
+
+  registerWithServer() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: "register",
+          userId: this.userId,
+        })
+      );
     }
-    if (payload.sdp) {
-      pc.setRemoteDescription(payload).then(async () => {
-        if (payload.type === "offer") {
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          ws.send(
-            JSON.stringify({
-              type: "signal",
-              to: from,
-              payload: pc.localDescription,
-            })
-          );
+  }
+
+  handleMessage(message) {
+    switch (message.type) {
+      case "welcome":
+        // Server assigned us our peer ID
+        console.log("Welcome, my peer ID is:", message.peerId);
+        this.peerId = message.peerId;
+        break;
+
+      case "registered":
+        console.log("Successfully registered with user ID:", message.userId);
+        break;
+
+      case "peer-joined":
+        // Someone is trying to connect to us
+        this.handleIncomingConnection(message.peerId);
+        break;
+
+      case "signal":
+        this.handleSignal(message);
+        break;
+
+      case "ice-candidate":
+        this.handleIceCandidate(message);
+        break;
+
+      case "error":
+        console.error("Server error:", message.error);
+        this.updateConnectionStatus(`Error: ${message.error}`);
+        break;
+    }
+  }
+
+  async handleIncomingConnection(peerId) {
+    console.log("Incoming connection from:", peerId);
+    this.updateConnectionStatus("Incoming connection...");
+
+    // Automatically accept the connection (no permission prompt)
+    await this.setupPeerConnection(peerId);
+  }
+
+  async setupPeerConnection(peerId) {
+    try {
+      this.peerConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      });
+
+      this.peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.sendSignal(peerId, {
+            type: "ice-candidate",
+            payload: event.candidate,
+          });
+        }
+      };
+
+      this.peerConnection.ontrack = (event) => {
+        console.log("Received remote stream");
+        this.handleRemoteStream(event.streams[0]);
+      };
+
+      // Get screen sharing stream
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+
+      this.localStream = stream;
+      stream.getTracks().forEach((track) => {
+        this.peerConnection.addTrack(track, stream);
+      });
+
+      // Create and send offer
+      const offer = await this.peerConnection.createOffer();
+      await this.peerConnection.setLocalDescription(offer);
+
+      this.sendSignal(peerId, {
+        type: "signal",
+        payload: offer,
+      });
+
+      this.updateConnectionStatus("Screen sharing active");
+    } catch (error) {
+      console.error("Error setting up peer connection:", error);
+      this.updateConnectionStatus("Connection failed");
+    }
+  }
+
+  handleSignal(message) {
+    if (!this.peerConnection) return;
+
+    const { payload } = message;
+
+    if (payload.type === "offer") {
+      this.peerConnection
+        .setRemoteDescription(new RTCSessionDescription(payload))
+        .then(() => this.peerConnection.createAnswer())
+        .then((answer) => this.peerConnection.setLocalDescription(answer))
+        .then(() => {
+          this.sendSignal(message.from, {
+            type: "signal",
+            payload: this.peerConnection.localDescription,
+          });
+        })
+        .catch((error) => console.error("Error handling offer:", error));
+    } else if (payload.type === "answer") {
+      this.peerConnection
+        .setRemoteDescription(new RTCSessionDescription(payload))
+        .catch((error) => console.error("Error handling answer:", error));
+    }
+  }
+
+  handleIceCandidate(message) {
+    if (!this.peerConnection) return;
+
+    this.peerConnection
+      .addIceCandidate(new RTCIceCandidate(message.payload))
+      .catch((error) => console.error("Error adding ICE candidate:", error));
+  }
+
+  sendSignal(targetId, message) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: message.type,
+          to: targetId,
+          payload: message.payload,
+        })
+      );
+    }
+  }
+
+  handleRemoteStream(stream) {
+    // Create video element for remote screen if it doesn't exist
+    if (!this.remoteVideo) {
+      this.remoteVideo = document.createElement("video");
+      this.remoteVideo.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: black;
+                z-index: 1000;
+                object-fit: contain;
+            `;
+      this.remoteVideo.autoplay = true;
+      document.body.appendChild(this.remoteVideo);
+    }
+
+    this.remoteVideo.srcObject = stream;
+    this.updateConnectionStatus("Connected - sharing screen");
+  }
+
+  updateConnectionStatus(status) {
+    const statusElement = document.getElementById("connectionStatus");
+    statusElement.textContent = status;
+  }
+
+  connectToUser(targetUserId) {
+    if (!targetUserId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.updateConnectionStatus("Not connected to server");
+      return;
+    }
+
+    console.log("Attempting to connect to user:", targetUserId);
+    this.updateConnectionStatus("Connecting...");
+
+    this.ws.send(
+      JSON.stringify({
+        type: "connect",
+        targetUserId: targetUserId,
+      })
+    );
+  }
+
+  setupEventListeners() {
+    // Handle window close to clean up streams
+    window.addEventListener("beforeunload", () => {
+      if (this.localStream) {
+        this.localStream.getTracks().forEach((track) => track.stop());
+      }
+      if (this.ws) {
+        this.ws.close();
+      }
+    });
+
+    // Handle keyboard shortcut for connecting (Ctrl+Shift+C)
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey && event.shiftKey && event.key === "C") {
+        event.preventDefault();
+        this.showConnectDialog();
+      }
+    });
+
+    // Connect dialog event listeners
+    const connectCancel = document.getElementById("connectCancel");
+    const connectSubmit = document.getElementById("connectSubmit");
+    const connectInput = document.getElementById("connectInput");
+    const connectDialog = document.getElementById("connectDialog");
+
+    if (connectCancel) {
+      connectCancel.addEventListener("click", () => {
+        this.hideConnectDialog();
+      });
+    }
+
+    if (connectSubmit) {
+      connectSubmit.addEventListener("click", () => {
+        this.submitConnectDialog();
+      });
+    }
+
+    if (connectInput) {
+      // Handle Enter key in input field
+      connectInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          this.submitConnectDialog();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.hideConnectDialog();
+        }
+      });
+
+      // Auto-format input to uppercase and validate hex characters
+      connectInput.addEventListener("input", (event) => {
+        let value = event.target.value.toUpperCase();
+        // Only allow hexadecimal characters (0-9, A-F)
+        value = value.replace(/[^0-9A-F]/g, "");
+        event.target.value = value;
+      });
+    }
+
+    // Close dialog when clicking outside
+    if (connectDialog) {
+      connectDialog.addEventListener("click", (event) => {
+        if (event.target === connectDialog) {
+          this.hideConnectDialog();
         }
       });
     }
-    return;
   }
-  if (msg.type === "ice-candidate") {
-    const { from, to, payload } = msg;
-    if (to && selfId && to !== selfId) return;
-    const pc = peers.get(from)?.pc;
-    if (pc && payload) {
-      pc.addIceCandidate(payload).catch(() => {});
-    }
-    return;
+
+  showConnectDialog() {
+    const dialog = document.getElementById("connectDialog");
+    const input = document.getElementById("connectInput");
+
+    // Clear previous input
+    input.value = "";
+    input.focus();
+
+    // Show dialog
+    dialog.classList.add("show");
   }
-  if (msg.type === "error") {
-    log(`Error: ${msg.error}`);
+
+  hideConnectDialog() {
+    const dialog = document.getElementById("connectDialog");
+    dialog.classList.remove("show");
   }
-}
 
-function createCursor(peerId) {
-  const el = document.createElement("div");
-  el.className = "cursor";
-  overlay.appendChild(el);
-  peerIdToCursorEl.set(peerId, el);
-  return el;
-}
+  submitConnectDialog() {
+    const input = document.getElementById("connectInput");
+    const targetId = input.value.trim().toUpperCase();
 
-function updateCursor(peerId, x, y) {
-  const el = peerIdToCursorEl.get(peerId) || createCursor(peerId);
-
-  // Convert absolute screen coordinates to relative position on video element
-  const rect = remoteVideo.getBoundingClientRect();
-  const relativeX = x / remoteVideo.videoWidth;
-  const relativeY = y / remoteVideo.videoHeight;
-
-  el.style.left = `${rect.left + relativeX * rect.width}px`;
-  el.style.top = `${rect.top + relativeY * rect.height}px`;
-}
-
-function createPeerConnection(isInitiator, peerId) {
-  ensureSocket();
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-
-  peers.set(peerId, { pc });
-  updatePeersCount();
-
-  pc.onicecandidate = (e) => {
-    if (e.candidate) {
-      ws.send(
-        JSON.stringify({
-          type: "ice-candidate",
-          to: peerId,
-          payload: e.candidate,
-        })
-      );
-    }
-  };
-
-  pc.ontrack = (e) => {
-    remoteVideo.srcObject = e.streams[0];
-  };
-
-  if (localStream) {
-    for (const track of localStream.getTracks()) {
-      pc.addTrack(track, localStream);
+    if (targetId) {
+      this.connectToUser(targetId);
+      this.hideConnectDialog();
     }
   }
-
-  let dc;
-  if (isInitiator) {
-    dc = pc.createDataChannel("control");
-    setupDataChannel(dc);
-    pc.createOffer().then(async (offer) => {
-      await pc.setLocalDescription(offer);
-      ws.send(JSON.stringify({ type: "signal", to: peerId, payload: offer }));
-    });
-  } else {
-    pc.ondatachannel = (e) => {
-      dc = e.channel;
-      setupDataChannel(dc);
-    };
-  }
-
-  return pc;
 }
 
-function setupDataChannel(dc) {
-  dataChannel = dc;
-  dc.onopen = () => log("DataChannel open");
-  dc.onclose = () => log("DataChannel closed");
-  dc.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "cursor") {
-        updateCursor(msg.from || "peer", msg.x, msg.y);
-      } else if (msg.type === "mouse") {
-        if (
-          msg.action === "move" &&
-          typeof msg.x === "number" &&
-          typeof msg.y === "number"
-        ) {
-          window.electronAPI.simulateMouse({
-            type: "move",
-            x: msg.x,
-            y: msg.y,
-          });
-        } else if (msg.action === "down") {
-          window.electronAPI.simulateMouse({ type: "down" });
-        } else if (msg.action === "up") {
-          window.electronAPI.simulateMouse({ type: "up" });
-        }
-      }
-    } catch (_) {}
-  };
+// Copy user ID to clipboard
+function copyUserId() {
+  const userId = document.getElementById("userId").textContent;
+  if (userId && userId !== "Loading...") {
+    navigator.clipboard
+      .writeText(userId)
+      .then(() => {
+        showCopyNotification();
+      })
+      .catch((err) => {
+        console.error("Failed to copy ID:", err);
+        // Fallback for older browsers
+        const textArea = document.createElement("textarea");
+        textArea.value = userId;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+        showCopyNotification();
+      });
+  }
 }
 
-btnCreate.onclick = () => {
-  ensureSocket();
-  // انتظر الاتصال ينجح
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "create" }));
-  } else {
-    // لو لسه connecting، انتظر
-    const checkConnection = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "create" }));
-      } else if (ws.readyState === WebSocket.CONNECTING) {
-        setTimeout(checkConnection, 100);
-      } else {
-        log("Failed to connect to signaling server");
-      }
-    };
-    setTimeout(checkConnection, 100);
-  }
-};
+function showCopyNotification() {
+  const notification = document.getElementById("copyNotification");
+  notification.classList.add("show");
+  setTimeout(() => {
+    notification.classList.remove("show");
+  }, 2000);
+}
 
-btnJoin.onclick = () => {
-  ensureSocket();
-  const rid = roomIdInput.value.trim();
-  if (!rid) return;
-  roomId = rid;
-  currentRoomEl.textContent = roomId;
-  // انتظر الاتصال ينجح
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "join", roomId }));
-  } else {
-    // لو لسه connecting، انتظر
-    const checkConnection = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "join", roomId }));
-      } else if (ws.readyState === WebSocket.CONNECTING) {
-        setTimeout(checkConnection, 100);
-      } else {
-        log("Failed to connect to signaling server");
-      }
-    };
-    setTimeout(checkConnection, 100);
-  }
-};
-
-btnShare.onclick = async () => {
-  setStatus("Selecting source...");
-  const sources = await window.electronAPI.getDesktopSources();
-  // naive pick first screen
-  const screen =
-    sources.find((s) => s.id.toLowerCase().includes("screen")) || sources[0];
-  if (!screen) return;
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: "desktop",
-          chromeMediaSourceId: screen.id,
-        },
-      },
-    });
-  } catch (err) {
-    // fallback
-    stream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: false,
-    });
-  }
-  localStream = stream;
-  // renegotiate on existing PCs
-  for (const [, { pc }] of peers) {
-    for (const track of localStream.getTracks()) {
-      pc.addTrack(track, localStream);
-    }
-  }
-  setStatus("Sharing");
-};
-
-// local cursor broadcast
-window.addEventListener("mousemove", (e) => {
-  if (!dataChannel || dataChannel.readyState !== "open") return;
-  // Send absolute screen coordinates instead of normalized window coordinates
-  const rect = remoteVideo.getBoundingClientRect();
-  const scaleX = remoteVideo.videoWidth / rect.width;
-  const scaleY = remoteVideo.videoHeight / rect.height;
-
-  // Calculate position relative to the video element
-  const relativeX = (e.clientX - rect.left) / rect.width;
-  const relativeY = (e.clientY - rect.top) / rect.height;
-
-  // Convert to screen coordinates of the remote machine
-  const screenX = Math.round(relativeX * remoteVideo.videoWidth);
-  const screenY = Math.round(relativeY * remoteVideo.videoHeight);
-
-  dataChannel.send(JSON.stringify({ type: "cursor", x: screenX, y: screenY }));
+// Initialize the app when DOM is loaded
+document.addEventListener("DOMContentLoaded", () => {
+  new RemoteDeskApp();
 });
-
-btnControl.onclick = () => {
-  // demo: simulate local control event to remote
-  window.addEventListener(
-    "click",
-    (e) => {
-      if (!dataChannel || dataChannel.readyState !== "open") return;
-
-      // Calculate screen coordinates for the click
-      const rect = remoteVideo.getBoundingClientRect();
-      const relativeX = (e.clientX - rect.left) / rect.width;
-      const relativeY = (e.clientY - rect.top) / rect.height;
-      const screenX = Math.round(relativeX * remoteVideo.videoWidth);
-      const screenY = Math.round(relativeY * remoteVideo.videoHeight);
-
-      dataChannel.send(
-        JSON.stringify({
-          type: "mouse",
-          action: "move",
-          x: screenX,
-          y: screenY,
-        })
-      );
-      dataChannel.send(JSON.stringify({ type: "mouse", action: "down" }));
-      dataChannel.send(JSON.stringify({ type: "mouse", action: "up" }));
-    },
-    { once: true }
-  );
-  log("Next click will be sent as remote mouse click");
-};
