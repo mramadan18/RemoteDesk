@@ -11,13 +11,20 @@ const { v4: uuidv4 } = require("uuid");
  * @returns {{ httpServer: import('http').Server, wss: import('ws').WebSocketServer }}
  */
 function start(options = {}) {
-  const port = options.port || 5005;
+  // Use environment variable PORT if available, otherwise fallback to 5005
+  const port = process.env.PORT || options.port || 5005;
+  // Use environment variable HOST if available, otherwise fallback to 0.0.0.0 for production
+  const host = process.env.HOST || '0.0.0.0';
 
   const app = express();
   app.use(express.json());
 
   app.get("/health", (req, res) => {
     res.status(200).send("ok");
+  });
+
+  app.get("/", (req, res) => {
+    res.status(200).send("RemoteDesk Signaling Server is running");
   });
 
   const httpServer = http.createServer(app);
@@ -146,8 +153,9 @@ function start(options = {}) {
     });
   });
 
-  httpServer.listen(port, () => {
-    console.log(`[signaling] listening on http://localhost:${port}`);
+  httpServer.listen(port, host, () => {
+    console.log(`[signaling] listening on http://${host}:${port}`);
+    console.log(`[signaling] WebSocket available at ws://${host}:${port}/ws`);
   });
 
   if (options.probe) {
