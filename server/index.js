@@ -88,6 +88,8 @@ function start(options = {}) {
           type: "peer-joined",
           peerId: ws.peerId,
           userId: ws.userId,
+          initiatorId: ws.userId,
+          initiatorPeerId: ws.peerId,
         });
 
         // Add to pending connections

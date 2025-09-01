@@ -249,10 +249,55 @@ class RemoteDeskApp {
     }
   }
 
-  handleSignal(message) {
-    if (!this.peerConnection) return;
+  // Set up peer connection as receiver (when someone connects to us)
+  async setupPeerConnectionAsReceiver(peerId) {
+    console.log("Setting up peer connection as receiver for peer:", peerId);
+    this.updateConnectionStatus("Receiving connection...");
 
+    this.peerConnection = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
+
+    this.peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignal(peerId, {
+          type: "ice-candidate",
+          payload: event.candidate,
+        });
+      }
+    };
+
+    this.peerConnection.ontrack = (event) => {
+      console.log("Received remote stream as receiver");
+      this.handleRemoteStream(event.streams[0]);
+      this.updateConnectionStatus("Connected - viewing remote screen");
+    };
+
+    // Note: As receiver, we don't need to add any tracks or create offers
+    // We'll wait for the offer from the sender and respond with an answer
+  }
+
+  async handleSignal(message) {
     const { payload } = message;
+
+    // If we don't have a peer connection but received an offer,
+    // we need to set one up (this happens when we're the receiver)
+    if (!this.peerConnection && payload.type === "offer") {
+      console.log(
+        "Received offer but no peer connection exists, setting one up..."
+      );
+      try {
+        await this.setupPeerConnectionAsReceiver(message.from);
+      } catch (error) {
+        console.error("Failed to set up peer connection as receiver:", error);
+        return;
+      }
+    }
+
+    if (!this.peerConnection) return;
 
     if (payload.type === "offer") {
       this.peerConnection
@@ -363,6 +408,9 @@ class RemoteDeskApp {
 
     console.log("Attempting to connect to user:", targetUserId);
     this.updateConnectionStatus("Connecting...");
+
+    // Store the target user ID for when we receive signals
+    this.targetUserId = targetUserId;
 
     this.ws.send(
       JSON.stringify({
