@@ -16,15 +16,29 @@ function start(options = {}) {
   // Use environment variable HOST if available, otherwise fallback to 0.0.0.0 for production
   const host = process.env.HOST || '0.0.0.0';
 
+  console.log(`[config] Starting server with port=${port}, host=${host}`);
+  console.log(`[config] NODE_ENV=${process.env.NODE_ENV}`);
+
   const app = express();
   app.use(express.json());
 
   app.get("/health", (req, res) => {
+    console.log(`[health] Health check request from ${req.ip}`);
     res.status(200).send("ok");
   });
 
   app.get("/", (req, res) => {
     res.status(200).send("RemoteDesk Signaling Server is running");
+  });
+
+  app.get("/status", (req, res) => {
+    res.json({
+      status: "running",
+      port: port,
+      host: host,
+      nodeEnv: process.env.NODE_ENV,
+      timestamp: new Date().toISOString()
+    });
   });
 
   const httpServer = http.createServer(app);
@@ -156,6 +170,15 @@ function start(options = {}) {
   httpServer.listen(port, host, () => {
     console.log(`[signaling] listening on http://${host}:${port}`);
     console.log(`[signaling] WebSocket available at ws://${host}:${port}/ws`);
+    console.log(`[signaling] Health check available at http://${host}:${port}/health`);
+    console.log(`[signaling] Status available at http://${host}:${port}/status`);
+  });
+
+  httpServer.on('error', (err) => {
+    console.error(`[error] Server error: ${err.message}`);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[error] Port ${port} is already in use`);
+    }
   });
 
   if (options.probe) {
