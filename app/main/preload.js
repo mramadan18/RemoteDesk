@@ -1,5 +1,4 @@
 const { contextBridge, ipcRenderer, clipboard } = require("electron");
-const fs = require("fs");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   getDesktopSources: (opts) =>

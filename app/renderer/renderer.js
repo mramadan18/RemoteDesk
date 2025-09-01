@@ -20,7 +20,7 @@ function log(message) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-const signalingUrl = "ws://remotedesk-production.up.railway.app/ws";
+const signalingUrl = "wss://remotedesk-production.up.railway.app/ws";
 let ws;
 let roomId = null;
 let peers = new Map();
