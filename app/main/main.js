@@ -8,6 +8,7 @@ const {
 } = require("electron");
 const os = require("os");
 let nut;
+const { execFile } = require("child_process");
 const path = require("path");
 
 let mainWindow;
@@ -162,7 +163,7 @@ function ensureNutLoaded() {
       nut.mouse.config.autoDelayMs = 0;
     } catch (err) {
       console.error("@nut-tree/nut-js not available:", err.message);
-      throw new Error("MOUSE_INJECTION_NOT_AVAILABLE");
+      // Leave nut undefined to fall back to PowerShell injector
     }
   }
   return nut;
@@ -201,60 +202,155 @@ function toScreenPoint(relX, relY) {
 }
 
 ipcMain.handle("input-move", async (event, { x, y }) => {
-  const { mouse, Point } = ensureNutLoaded();
+  const loaded = ensureNutLoaded();
   const p = toScreenPoint(x, y);
-  await mouse.setPosition(new Point(p.x, p.y));
+  if (loaded) {
+    const { mouse, Point } = loaded;
+    await mouse.setPosition(new Point(p.x, p.y));
+    return true;
+  }
+  await psMove(p.x, p.y);
   return true;
 });
 
 ipcMain.handle("input-down", async (event, { button, x, y }) => {
-  const { mouse, Button, Point } = ensureNutLoaded();
+  const loaded = ensureNutLoaded();
   if (typeof x === "number" && typeof y === "number") {
     const p = toScreenPoint(x, y);
-    await mouse.setPosition(new Point(p.x, p.y));
+    if (loaded) {
+      const { mouse, Point } = loaded;
+      await mouse.setPosition(new Point(p.x, p.y));
+    } else {
+      await psMove(p.x, p.y);
+    }
   }
-  const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
-  await mouse.pressButton(map[button] ?? Button.LEFT);
+  if (loaded) {
+    const { mouse, Button } = loaded;
+    const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
+    await mouse.pressButton(map[button] ?? Button.LEFT);
+  } else {
+    await psClick(button ?? 0, true);
+  }
   return true;
 });
 
 ipcMain.handle("input-up", async (event, { button, x, y }) => {
-  const { mouse, Button, Point } = ensureNutLoaded();
+  const loaded = ensureNutLoaded();
   if (typeof x === "number" && typeof y === "number") {
     const p = toScreenPoint(x, y);
-    await mouse.setPosition(new Point(p.x, p.y));
+    if (loaded) {
+      const { mouse, Point } = loaded;
+      await mouse.setPosition(new Point(p.x, p.y));
+    } else {
+      await psMove(p.x, p.y);
+    }
   }
-  const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
-  await mouse.releaseButton(map[button] ?? Button.LEFT);
+  if (loaded) {
+    const { mouse, Button } = loaded;
+    const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
+    await mouse.releaseButton(map[button] ?? Button.LEFT);
+  } else {
+    // No-op for release in PS fallback
+  }
   return true;
 });
 
 ipcMain.handle("input-dbl", async (event, { button, x, y }) => {
-  const { mouse, Button, Point } = ensureNutLoaded();
+  const loaded = ensureNutLoaded();
   if (typeof x === "number" && typeof y === "number") {
     const p = toScreenPoint(x, y);
-    await mouse.setPosition(new Point(p.x, p.y));
+    if (loaded) {
+      const { mouse, Point } = loaded;
+      await mouse.setPosition(new Point(p.x, p.y));
+    } else {
+      await psMove(p.x, p.y);
+    }
   }
-  const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
-  const b = map[button] ?? Button.LEFT;
-  await mouse.doubleClick(b);
+  if (loaded) {
+    const { mouse, Button } = loaded;
+    const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
+    const b = map[button] ?? Button.LEFT;
+    await mouse.doubleClick(b);
+  } else {
+    await psDoubleClick();
+  }
   return true;
 });
 
 ipcMain.handle("input-ctx", async (event, { x, y }) => {
-  const { mouse, Button, Point } = ensureNutLoaded();
+  const loaded = ensureNutLoaded();
   if (typeof x === "number" && typeof y === "number") {
     const p = toScreenPoint(x, y);
-    await mouse.setPosition(new Point(p.x, p.y));
+    if (loaded) {
+      const { mouse, Point } = loaded;
+      await mouse.setPosition(new Point(p.x, p.y));
+    } else {
+      await psMove(p.x, p.y);
+    }
   }
-  await mouse.click(Button.RIGHT);
+  if (loaded) {
+    const { mouse, Button } = loaded;
+    await mouse.click(Button.RIGHT);
+  } else {
+    await psRightClick();
+  }
   return true;
 });
 
 ipcMain.handle("input-wheel", async (event, { dx = 0, dy = 0 }) => {
-  const { mouse } = ensureNutLoaded();
-  // nut-js uses steps, positive is down/right
-  if (dx) await mouse.scrollRight(Math.trunc(dx * 50));
-  if (dy) await mouse.scrollDown(Math.trunc(dy * 50));
+  const loaded = ensureNutLoaded();
+  if (loaded) {
+    const { mouse } = loaded;
+    if (dx) await mouse.scrollRight(Math.trunc(dx * 50));
+    if (dy) await mouse.scrollDown(Math.trunc(dy * 50));
+  } else {
+    await psScroll(dx, dy);
+  }
   return true;
 });
+
+// Simple PowerShell-based fallback using .NET SendInput
+function execPS(script) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { windowsHide: true },
+      (err) => (err ? reject(err) : resolve())
+    );
+  });
+}
+
+async function psMove(x, y) {
+  const script = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y})`;
+  await execPS(script);
+}
+
+async function psClick(button) {
+  // 0 left, 1 middle, 2 right
+  const btn = button === 2 ? "right" : button === 1 ? "middle" : "left";
+  const script = `Add-Type -AssemblyName System.Windows.Forms; $sig=@'
+using System;using System.Runtime.InteropServices;public class I{[DllImport("user32.dll")]public static extern void mouse_event(int dwFlags,int dx,int dy,int cButtons,int dwExtraInfo);} 
+'@; Add-Type $sig; if ('${btn}' -eq 'right'){[I]::mouse_event(0x0008,0,0,0,0);Start-Sleep -Milliseconds 10;[I]::mouse_event(0x0010,0,0,0,0)} elseif ('${btn}' -eq 'middle'){[I]::mouse_event(0x0020,0,0,0,0);Start-Sleep -Milliseconds 10;[I]::mouse_event(0x0040,0,0,0,0)} else {[I]::mouse_event(0x0002,0,0,0,0);Start-Sleep -Milliseconds 10;[I]::mouse_event(0x0004,0,0,0,0)}`;
+  await execPS(script);
+}
+
+async function psRightClick() {
+  await psClick(2);
+}
+
+async function psDoubleClick() {
+  const script = `Add-Type -AssemblyName System.Windows.Forms; $sig=@'
+using System;using System.Runtime.InteropServices;public class I{[DllImport("user32.dll")]public static extern void mouse_event(int dwFlags,int dx,int dy,int cButtons,int dwExtraInfo);} 
+'@; Add-Type $sig; foreach($i in 1..2){[I]::mouse_event(0x0002,0,0,0,0);Start-Sleep -Milliseconds 50;[I]::mouse_event(0x0004,0,0,0,0);Start-Sleep -Milliseconds 50}`;
+  await execPS(script);
+}
+
+async function psScroll(dx, dy) {
+  const vertical = Math.trunc((dy || 0) * 100);
+  const horizontal = Math.trunc((dx || 0) * 100);
+  const script = `Add-Type -AssemblyName System.Windows.Forms; $sig=@'
+using System;using System.Runtime.InteropServices;public class I{[DllImport("user32.dll")]public static extern void mouse_event(int dwFlags,int dx,int dy,int cButtons,int dwExtraInfo);} 
+'@; Add-Type $sig; if (${vertical} -ne 0){[I]::mouse_event(0x0800,0,0,${vertical},0)}; if (${horizontal} -ne 0){[I]::mouse_event(0x1000,0,0,${horizontal},0)}`;
+  await execPS(script);
+}
