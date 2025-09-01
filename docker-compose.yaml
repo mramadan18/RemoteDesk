@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   remotedesk-server:
@@ -12,7 +12,13 @@ services:
       - PORT=${PORT:-5005}
       - HOST=0.0.0.0
     healthcheck:
-      test: ["CMD", "node", "-e", "const port = process.env.PORT || 5005; require('http').get('http://localhost:' + port + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const port = process.env.PORT || 5005; require('http').get('http://localhost:' + port + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
