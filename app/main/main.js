@@ -1,10 +1,4 @@
-const {
-  app,
-  BrowserWindow,
-  ipcMain,
-  dialog,
-  desktopCapturer,
-} = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer } = require("electron");
 const path = require("path");
 
 let mainWindow;
@@ -58,52 +52,4 @@ ipcMain.handle("desktop-capturer:get-sources", async (event, opts) => {
     appIconDataUrl: s.appIcon ? s.appIcon.toDataURL() : null,
     thumbnailDataUrl: s.thumbnail ? s.thumbnail.toDataURL() : null,
   }));
-});
-
-// IPC: dialogs for file transfer
-ipcMain.handle("dialog:open-file", async () => {
-  const result = await dialog.showOpenDialog({ properties: ["openFile"] });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
-
-ipcMain.handle("dialog:save-file", async (event, suggestedName) => {
-  const result = await dialog.showSaveDialog({
-    defaultPath: suggestedName || "received.file",
-  });
-  if (result.canceled || !result.filePath) return null;
-  return result.filePath;
-});
-
-// IPC: file operations
-ipcMain.handle("fs:read-file", (event, filePath) => {
-  try {
-    const buf = fs.readFileSync(filePath);
-    const ab = buf.buffer.slice(
-      buf.byteOffset,
-      buf.byteOffset + buf.byteLength
-    );
-    return ab;
-  } catch (err) {
-    throw new Error("Failed to read file");
-  }
-});
-
-ipcMain.handle("fs:write-file", (event, filePath, data) => {
-  try {
-    let buffer;
-    if (data instanceof ArrayBuffer) {
-      buffer = Buffer.from(new Uint8Array(data));
-    } else if (ArrayBuffer.isView(data)) {
-      buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-    } else if (typeof data === "string") {
-      buffer = Buffer.from(data, "base64");
-    } else {
-      throw new Error("Unsupported data type");
-    }
-    fs.writeFileSync(filePath, buffer);
-    return true;
-  } catch (err) {
-    throw new Error("Failed to write file");
-  }
 });

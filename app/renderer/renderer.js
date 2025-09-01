@@ -9,9 +9,6 @@ const btnCreate = document.getElementById("btnCreate");
 const btnJoin = document.getElementById("btnJoin");
 const btnShare = document.getElementById("btnShare");
 const btnControl = document.getElementById("btnControl");
-const btnCopyPull = document.getElementById("btnCopyPull");
-const btnCopyPush = document.getElementById("btnCopyPush");
-const btnSendFile = document.getElementById("btnSendFile");
 const roomIdInput = document.getElementById("roomId");
 
 function log(message) {
@@ -28,13 +25,6 @@ let peers = new Map();
 let localStream = null;
 let dataChannel = null;
 let selfId = null;
-
-// file receive buffer
-let incomingFile = {
-  meta: null,
-  chunks: [],
-  received: 0,
-};
 
 // cursors state for multi-mouse overlay
 const peerIdToCursorEl = new Map();
@@ -198,24 +188,10 @@ function setupDataChannel(dc) {
   dc.onopen = () => log("DataChannel open");
   dc.onclose = () => log("DataChannel closed");
   dc.onmessage = (e) => {
-    // binary chunks for file transfer
-    if (e.data instanceof ArrayBuffer || e.data instanceof Blob) {
-      const chunkPromise =
-        e.data instanceof Blob ? e.data.arrayBuffer() : Promise.resolve(e.data);
-      chunkPromise.then((buf) => {
-        const u8 = new Uint8Array(buf);
-        incomingFile.chunks.push(u8);
-        incomingFile.received += u8.byteLength;
-      });
-      return;
-    }
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === "cursor") {
         updateCursor(msg.from || "peer", msg.x, msg.y);
-      } else if (msg.type === "clipboard-text") {
-        lastReceivedClipboard = msg.text || "";
-        window.electronAPI.writeClipboardText(lastReceivedClipboard);
       } else if (msg.type === "mouse") {
         if (
           msg.action === "move" &&
@@ -232,53 +208,29 @@ function setupDataChannel(dc) {
         } else if (msg.action === "up") {
           window.electronAPI.simulateMouse({ type: "up" });
         }
-      } else if (msg.type === "file-meta") {
-        incomingFile.meta = { name: msg.name, size: msg.size };
-        incomingFile.chunks = [];
-        incomingFile.received = 0;
-        log(`Receiving file: ${msg.name} (${msg.size} bytes)`);
-      } else if (msg.type === "file-end") {
-        // assemble and save
-        const total = incomingFile.received;
-        const joined = new Uint8Array(total);
-        let offset = 0;
-        for (const c of incomingFile.chunks) {
-          joined.set(c, offset);
-          offset += c.byteLength;
-        }
-        (async () => {
-          const savePath = await window.electronAPI.saveFileDialog(
-            incomingFile.meta?.name || "received.file"
-          );
-          if (savePath) {
-            window.electronAPI.writeFile(savePath, joined);
-            log(`Saved file to ${savePath}`);
-          } else {
-            log("Save canceled");
-          }
-        })();
-        incomingFile = { meta: null, chunks: [], received: 0 };
       }
     } catch (_) {}
   };
-
-  // basic clipboard sync loop (text-only) with loop prevention
-  let lastSentClipboard = "";
-  let lastObservedClipboard = "";
-  window.setInterval(() => {
-    if (!dataChannel || dataChannel.readyState !== "open") return;
-    const text = window.electronAPI.readClipboardText();
-    if (text !== lastObservedClipboard && text !== lastReceivedClipboard) {
-      lastObservedClipboard = text;
-      lastSentClipboard = text;
-      dataChannel.send(JSON.stringify({ type: "clipboard-text", text }));
-    }
-  }, 1000);
 }
 
 btnCreate.onclick = () => {
   ensureSocket();
-  ws.send(JSON.stringify({ type: "create" }));
+  // انتظر الاتصال ينجح
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "create" }));
+  } else {
+    // لو لسه connecting، انتظر
+    const checkConnection = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "create" }));
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        setTimeout(checkConnection, 100);
+      } else {
+        log("Failed to connect to signaling server");
+      }
+    };
+    setTimeout(checkConnection, 100);
+  }
 };
 
 btnJoin.onclick = () => {
@@ -345,51 +297,4 @@ btnControl.onclick = () => {
     { once: true }
   );
   log("Next click will be sent as remote mouse click");
-};
-
-btnCopyPull.onclick = async () => {
-  if (!dataChannel || dataChannel.readyState !== "open") return;
-  // request remote clipboard (simple demo: rely on background sync in future)
-  log("Pulling clipboard not implemented; use push for demo");
-};
-
-btnCopyPush.onclick = async () => {
-  if (!dataChannel || dataChannel.readyState !== "open") return;
-  const text = window.electronAPI.readClipboardText();
-  dataChannel.send(JSON.stringify({ type: "clipboard-text", text }));
-};
-
-btnSendFile.onclick = async () => {
-  if (!dataChannel || dataChannel.readyState !== "open") return;
-  const filePath = await window.electronAPI.openFileDialog();
-  if (!filePath) return;
-  try {
-    const buf = window.electronAPI.readFile(filePath);
-    const chunkSize = 16 * 1024;
-    const total = buf.length;
-    let offset = 0;
-    dataChannel.send(
-      JSON.stringify({
-        type: "file-meta",
-        name: filePath.split(/\\\\|\//).pop(),
-        size: total,
-      })
-    );
-    while (offset < total) {
-      const end = Math.min(offset + chunkSize, total);
-      const chunk = buf.slice(offset, end);
-      // ensure ArrayBuffer for cross-browser compat
-      const ab = chunk.buffer.slice(
-        chunk.byteOffset,
-        chunk.byteOffset + chunk.byteLength
-      );
-      dataChannel.send(ab);
-      offset = end;
-      // yield to avoid blocking
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    dataChannel.send(JSON.stringify({ type: "file-end" }));
-  } catch (err) {
-    log("File send error");
-  }
 };
