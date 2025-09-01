@@ -146,6 +146,10 @@ class RemoteDeskApp {
       );
       this.inputChannel.onopen = () => {
         console.log("Input data channel open");
+        this.updateConnectionStatus("Connected - receiving remote control");
+        try {
+          this.inputChannel.send(JSON.stringify({ t: "hello-host" }));
+        } catch (_) {}
       };
       this.inputChannel.onclose = () => {
         console.log("Input data channel closed");
@@ -153,6 +157,10 @@ class RemoteDeskApp {
       this.inputChannel.onmessage = async (e) => {
         try {
           const msg = JSON.parse(e.data);
+          if (msg && msg.t === "hello-viewer") {
+            console.log("Viewer handshake received");
+            return;
+          }
           await this.injectInput(msg);
         } catch (err) {
           console.warn("Failed to process input message", err);
@@ -303,7 +311,13 @@ class RemoteDeskApp {
     this.peerConnection.ondatachannel = (event) => {
       if (event.channel && event.channel.label === "input-events") {
         const channel = event.channel;
-        channel.onopen = () => console.log("Input data channel ready (viewer)");
+        channel.onopen = () => {
+          console.log("Input data channel ready (viewer)");
+          this.updateConnectionStatus("Connected - remote control ready");
+          try {
+            channel.send(JSON.stringify({ t: "hello-viewer" }));
+          } catch (_) {}
+        };
         channel.onmessage = (e) => {
           // Future: host -> viewer messages (e.g., cursor state). Not used now.
           try {

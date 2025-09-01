@@ -173,10 +173,24 @@ let primaryDisplaySize = { width: 1920, height: 1080 };
 app.whenReady().then(() => {
   try {
     const { screen } = require("electron");
-    const primary = screen.getPrimaryDisplay();
-    if (primary && primary.workAreaSize) {
-      primaryDisplaySize = primary.workAreaSize;
-    }
+    const update = () => {
+      const primary = screen.getPrimaryDisplay();
+      if (primary && primary.bounds) {
+        primaryDisplaySize = {
+          width: primary.bounds.width,
+          height: primary.bounds.height,
+        };
+      } else if (primary && primary.size) {
+        primaryDisplaySize = {
+          width: primary.size.width,
+          height: primary.size.height,
+        };
+      } else if (primary && primary.workAreaSize) {
+        primaryDisplaySize = primary.workAreaSize;
+      }
+    };
+    update();
+    screen.on("display-metrics-changed", update);
   } catch (_) {}
 });
 
@@ -193,30 +207,46 @@ ipcMain.handle("input-move", async (event, { x, y }) => {
   return true;
 });
 
-ipcMain.handle("input-down", async (event, { button }) => {
-  const { mouse, Button } = ensureNutLoaded();
+ipcMain.handle("input-down", async (event, { button, x, y }) => {
+  const { mouse, Button, Point } = ensureNutLoaded();
+  if (typeof x === "number" && typeof y === "number") {
+    const p = toScreenPoint(x, y);
+    await mouse.setPosition(new Point(p.x, p.y));
+  }
   const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
   await mouse.pressButton(map[button] ?? Button.LEFT);
   return true;
 });
 
-ipcMain.handle("input-up", async (event, { button }) => {
-  const { mouse, Button } = ensureNutLoaded();
+ipcMain.handle("input-up", async (event, { button, x, y }) => {
+  const { mouse, Button, Point } = ensureNutLoaded();
+  if (typeof x === "number" && typeof y === "number") {
+    const p = toScreenPoint(x, y);
+    await mouse.setPosition(new Point(p.x, p.y));
+  }
   const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
   await mouse.releaseButton(map[button] ?? Button.LEFT);
   return true;
 });
 
-ipcMain.handle("input-dbl", async (event, { button }) => {
-  const { mouse, Button } = ensureNutLoaded();
+ipcMain.handle("input-dbl", async (event, { button, x, y }) => {
+  const { mouse, Button, Point } = ensureNutLoaded();
+  if (typeof x === "number" && typeof y === "number") {
+    const p = toScreenPoint(x, y);
+    await mouse.setPosition(new Point(p.x, p.y));
+  }
   const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
   const b = map[button] ?? Button.LEFT;
   await mouse.doubleClick(b);
   return true;
 });
 
-ipcMain.handle("input-ctx", async () => {
-  const { mouse, Button } = ensureNutLoaded();
+ipcMain.handle("input-ctx", async (event, { x, y }) => {
+  const { mouse, Button, Point } = ensureNutLoaded();
+  if (typeof x === "number" && typeof y === "number") {
+    const p = toScreenPoint(x, y);
+    await mouse.setPosition(new Point(p.x, p.y));
+  }
   await mouse.click(Button.RIGHT);
   return true;
 });
