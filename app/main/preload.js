@@ -19,13 +19,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Screen sharing API
   getScreenSourceInfo: (sourceId) =>
     ipcRenderer.invoke("get-screen-source-info", sourceId),
-  // Mouse control API
-  mouse: {
-    move: (x, y) => ipcRenderer.invoke("mouse-move", x, y),
-    click: (button, double) =>
-      ipcRenderer.invoke("mouse-click", button, double),
-    toggle: (button, down) => ipcRenderer.invoke("mouse-toggle", button, down),
-    scroll: (x, y) => ipcRenderer.invoke("mouse-scroll", x, y),
+  // Input injection API
+  input: {
+    move: (x, y) => ipcRenderer.invoke("input-move", { x, y }),
+    down: (button) => ipcRenderer.invoke("input-down", { button }),
+    up: (button) => ipcRenderer.invoke("input-up", { button }),
+    dbl: (button) => ipcRenderer.invoke("input-dbl", { button }),
+    ctx: () => ipcRenderer.invoke("input-ctx"),
+    wheel: (dx, dy) => ipcRenderer.invoke("input-wheel", { dx, dy }),
   },
-  getScreenSize: () => ipcRenderer.invoke("get-screen-size"),
 });

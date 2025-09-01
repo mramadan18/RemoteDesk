@@ -6,7 +6,8 @@ const {
   systemPreferences,
   clipboard,
 } = require("electron");
-const { exec } = require("child_process");
+const os = require("os");
+let nut;
 const path = require("path");
 
 let mainWindow;
@@ -134,111 +135,6 @@ ipcMain.handle("clipboard-read-text", async () => {
   }
 });
 
-// Mouse control handlers using PowerShell
-function executePowerShellMouseCommand(action, params = {}) {
-  return new Promise((resolve, reject) => {
-    const scriptPath = path.join(__dirname, "../../mouse-control.ps1");
-    let command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}" -action ${action}`;
-
-    // Add parameters based on action
-    switch (action) {
-      case "move":
-        command += ` -x ${params.x} -y ${params.y}`;
-        break;
-      case "click":
-        command += ` -button ${params.button}`;
-        if (params.double) command += " -double";
-        break;
-      case "toggle":
-        command += ` -button ${params.button}`;
-        break;
-      case "scroll":
-        command += ` -x ${params.x} -y ${params.y}`;
-        break;
-    }
-
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`PowerShell error: ${error}`);
-        reject(error);
-        return;
-      }
-      if (stderr) {
-        console.error(`PowerShell stderr: ${stderr}`);
-      }
-      resolve(stdout.trim());
-    });
-  });
-}
-
-ipcMain.handle("mouse-move", async (event, x, y) => {
-  try {
-    await executePowerShellMouseCommand("move", { x, y });
-    return true;
-  } catch (error) {
-    console.error("Error moving mouse:", error);
-    throw error;
-  }
-});
-
-ipcMain.handle(
-  "mouse-click",
-  async (event, button = "left", double = false) => {
-    try {
-      await executePowerShellMouseCommand("click", { button, double });
-      return true;
-    } catch (error) {
-      console.error("Error clicking mouse:", error);
-      throw error;
-    }
-  }
-);
-
-ipcMain.handle("mouse-toggle", async (event, button = "left", down) => {
-  try {
-    await executePowerShellMouseCommand("toggle", { button });
-    return true;
-  } catch (error) {
-    console.error("Error toggling mouse:", error);
-    throw error;
-  }
-});
-
-ipcMain.handle("mouse-scroll", async (event, x, y) => {
-  try {
-    await executePowerShellMouseCommand("scroll", { x, y });
-    return true;
-  } catch (error) {
-    console.error("Error scrolling mouse:", error);
-    throw error;
-  }
-});
-
-ipcMain.handle("get-screen-size", async () => {
-  try {
-    const result = await executePowerShellMouseCommand("screensize");
-    if (result) {
-      return JSON.parse(result);
-    }
-    // Fallback to Electron's screen API
-    const { screen } = require("electron");
-    const primaryDisplay = screen.getPrimaryDisplay();
-    return {
-      width: primaryDisplay.size.width,
-      height: primaryDisplay.size.height,
-    };
-  } catch (error) {
-    console.error("Error getting screen size:", error);
-    // Fallback to Electron's screen API
-    const { screen } = require("electron");
-    const primaryDisplay = screen.getPrimaryDisplay();
-    return {
-      width: primaryDisplay.size.width,
-      height: primaryDisplay.size.height,
-    };
-  }
-});
-
 // Handle permission requests
 app.on("web-contents-created", (event, contents) => {
   contents.session.setPermissionRequestHandler(
@@ -252,4 +148,83 @@ app.on("web-contents-created", (event, contents) => {
       }
     }
   );
+});
+
+// Lazy-load nut.js only on Windows to inject input
+function ensureNutLoaded() {
+  if (!nut) {
+    try {
+      // Dynamic import to avoid packaging issues when optional
+      // eslint-disable-next-line global-require
+      nut = require("@nut-tree/nut-js");
+      // Improve speed/compat
+      nut.keyboard.config.autoDelayMs = 0;
+      nut.mouse.config.autoDelayMs = 0;
+    } catch (err) {
+      console.error("@nut-tree/nut-js not available:", err.message);
+      throw new Error("MOUSE_INJECTION_NOT_AVAILABLE");
+    }
+  }
+  return nut;
+}
+
+// Maintain last known screen size for relative coords
+let primaryDisplaySize = { width: 1920, height: 1080 };
+app.whenReady().then(() => {
+  try {
+    const { screen } = require("electron");
+    const primary = screen.getPrimaryDisplay();
+    if (primary && primary.workAreaSize) {
+      primaryDisplaySize = primary.workAreaSize;
+    }
+  } catch (_) {}
+});
+
+function toScreenPoint(relX, relY) {
+  const x = Math.round(relX * primaryDisplaySize.width);
+  const y = Math.round(relY * primaryDisplaySize.height);
+  return { x, y };
+}
+
+ipcMain.handle("input-move", async (event, { x, y }) => {
+  const { mouse, Point } = ensureNutLoaded();
+  const p = toScreenPoint(x, y);
+  await mouse.setPosition(new Point(p.x, p.y));
+  return true;
+});
+
+ipcMain.handle("input-down", async (event, { button }) => {
+  const { mouse, Button } = ensureNutLoaded();
+  const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
+  await mouse.pressButton(map[button] ?? Button.LEFT);
+  return true;
+});
+
+ipcMain.handle("input-up", async (event, { button }) => {
+  const { mouse, Button } = ensureNutLoaded();
+  const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
+  await mouse.releaseButton(map[button] ?? Button.LEFT);
+  return true;
+});
+
+ipcMain.handle("input-dbl", async (event, { button }) => {
+  const { mouse, Button } = ensureNutLoaded();
+  const map = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT };
+  const b = map[button] ?? Button.LEFT;
+  await mouse.doubleClick(b);
+  return true;
+});
+
+ipcMain.handle("input-ctx", async () => {
+  const { mouse, Button } = ensureNutLoaded();
+  await mouse.click(Button.RIGHT);
+  return true;
+});
+
+ipcMain.handle("input-wheel", async (event, { dx = 0, dy = 0 }) => {
+  const { mouse } = ensureNutLoaded();
+  // nut-js uses steps, positive is down/right
+  if (dx) await mouse.scrollRight(Math.trunc(dx * 50));
+  if (dy) await mouse.scrollDown(Math.trunc(dy * 50));
+  return true;
 });

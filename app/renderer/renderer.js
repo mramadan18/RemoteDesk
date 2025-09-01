@@ -6,12 +6,7 @@ class RemoteDeskApp {
     this.isHost = true;
     this.remoteVideo = null;
     this.localStream = null;
-
-    // Mouse control properties
-    this.mouseControlEnabled = false;
-    this.dataChannel = null;
-    this.remoteScreenSize = { width: 1920, height: 1080 }; // Default fallback
-    this.localScreenSize = { width: 1920, height: 1080 };
+    this.inputChannel = null; // RTCDataChannel for input events
 
     this.init();
   }
@@ -20,14 +15,6 @@ class RemoteDeskApp {
     try {
       this.userId = await window.electronAPI.getUserId();
       this.displayUserId();
-
-      // Get local screen size for mouse coordinate mapping
-      try {
-        this.localScreenSize = await window.electronAPI.getScreenSize();
-        console.log("Local screen size:", this.localScreenSize);
-      } catch (error) {
-        console.warn("Failed to get screen size, using defaults:", error);
-      }
 
       // Check screen sharing support
       if (!this.isScreenSharingSupported()) {
@@ -150,6 +137,28 @@ class RemoteDeskApp {
         ],
       });
 
+      // Create data channel for input events (host side)
+      this.inputChannel = this.peerConnection.createDataChannel(
+        "input-events",
+        {
+          ordered: true,
+        }
+      );
+      this.inputChannel.onopen = () => {
+        console.log("Input data channel open");
+      };
+      this.inputChannel.onclose = () => {
+        console.log("Input data channel closed");
+      };
+      this.inputChannel.onmessage = async (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          await this.injectInput(msg);
+        } catch (err) {
+          console.warn("Failed to process input message", err);
+        }
+      };
+
       this.peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           this.sendSignal(peerId, {
@@ -163,10 +172,6 @@ class RemoteDeskApp {
         console.log("Received remote stream");
         this.handleRemoteStream(event.streams[0]);
       };
-
-      // Create data channel for mouse control
-      this.dataChannel = this.peerConnection.createDataChannel("mouse-control");
-      this.setupDataChannel();
 
       // Get screen sharing stream using Electron API
       let stream;
@@ -294,11 +299,20 @@ class RemoteDeskApp {
       this.updateConnectionStatus("Connected - viewing remote screen");
     };
 
-    // Handle incoming data channels
+    // Listen for the host-created data channel (viewer side)
     this.peerConnection.ondatachannel = (event) => {
-      if (event.channel.label === "mouse-control") {
-        this.dataChannel = event.channel;
-        this.setupDataChannel();
+      if (event.channel && event.channel.label === "input-events") {
+        const channel = event.channel;
+        channel.onopen = () => console.log("Input data channel ready (viewer)");
+        channel.onmessage = (e) => {
+          // Future: host -> viewer messages (e.g., cursor state). Not used now.
+          try {
+            const msg = JSON.parse(e.data);
+            console.log("Host message:", msg);
+          } catch (_) {}
+        };
+        this.inputChannel = channel;
+        this.enableRemoteInputCapture();
       }
     };
 
@@ -377,131 +391,126 @@ class RemoteDeskApp {
                 background: black;
                 z-index: 1000;
                 object-fit: contain;
-                cursor: ${this.mouseControlEnabled ? "crosshair" : "default"};
             `;
       this.remoteVideo.autoplay = true;
       document.body.appendChild(this.remoteVideo);
-
-      // Set up mouse event listeners for remote control
-      this.setupMouseEventListeners();
     }
 
     this.remoteVideo.srcObject = stream;
     this.updateConnectionStatus("Connected - sharing screen");
-    this.updateMouseControlButton();
+
+    // If we're the viewer and the data channel is ready, enable input capture now
+    if (
+      this.inputChannel &&
+      this.inputChannel.readyState === "open" &&
+      !this._inputCaptureEnabled
+    ) {
+      this.enableRemoteInputCapture();
+    }
   }
 
-  setupMouseEventListeners() {
+  enableRemoteInputCapture() {
     if (!this.remoteVideo) return;
+    const video = this.remoteVideo;
 
-    // Mouse move events
-    this.remoteVideo.addEventListener("mousemove", (event) => {
-      if (!this.mouseControlEnabled) return;
+    const send = (payload) => {
+      if (!this.inputChannel || this.inputChannel.readyState !== "open") return;
+      try {
+        this.inputChannel.send(JSON.stringify(payload));
+      } catch (err) {
+        console.warn("Failed sending input payload", err);
+      }
+    };
 
-      const rect = this.remoteVideo.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+    const getRelative = (evt) => {
+      const rect = video.getBoundingClientRect();
+      const x = (evt.clientX - rect.left) / rect.width;
+      const y = (evt.clientY - rect.top) / rect.height;
+      return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+    };
 
-      this.sendMouseEvent({
-        type: "mousemove",
-        x: x,
-        y: y,
-        timestamp: Date.now(),
-      });
-    });
+    // Mouse move
+    const onMouseMove = (evt) => {
+      const { x, y } = getRelative(evt);
+      send({ t: "move", x, y });
+    };
 
-    // Mouse button events
-    this.remoteVideo.addEventListener("mousedown", (event) => {
-      if (!this.mouseControlEnabled) return;
+    // Mouse down/up
+    const onMouseDown = (evt) => {
+      const { x, y } = getRelative(evt);
+      const button = evt.button; // 0 left, 1 middle, 2 right
+      send({ t: "down", x, y, b: button });
+    };
+    const onMouseUp = (evt) => {
+      const { x, y } = getRelative(evt);
+      const button = evt.button;
+      send({ t: "up", x, y, b: button });
+    };
 
-      event.preventDefault();
+    // Double click
+    const onDblClick = (evt) => {
+      const { x, y } = getRelative(evt);
+      send({ t: "dbl", x, y, b: 0 });
+    };
 
-      const rect = this.remoteVideo.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+    // Context menu suppression
+    const onContextMenu = (evt) => {
+      evt.preventDefault();
+      const { x, y } = getRelative(evt);
+      send({ t: "ctx", x, y, b: 2 });
+    };
 
-      this.sendMouseEvent({
-        type: "mousedown",
-        x: x,
-        y: y,
-        button: event.button,
-        timestamp: Date.now(),
-      });
-    });
+    // Wheel
+    const onWheel = (evt) => {
+      // Normalize small deltas
+      const deltaX = Math.max(-1, Math.min(1, evt.deltaX));
+      const deltaY = Math.max(-1, Math.min(1, evt.deltaY));
+      send({ t: "wheel", dx: deltaX, dy: deltaY });
+    };
 
-    this.remoteVideo.addEventListener("mouseup", (event) => {
-      if (!this.mouseControlEnabled) return;
+    // Pointer lock optional: keep simple first
+    video.addEventListener("mousemove", onMouseMove);
+    video.addEventListener("mousedown", onMouseDown);
+    video.addEventListener("mouseup", onMouseUp);
+    video.addEventListener("dblclick", onDblClick);
+    video.addEventListener("contextmenu", onContextMenu);
+    video.addEventListener("wheel", onWheel, { passive: true });
 
-      event.preventDefault();
+    // Save cleanup
+    this._cleanupInputCapture = () => {
+      video.removeEventListener("mousemove", onMouseMove);
+      video.removeEventListener("mousedown", onMouseDown);
+      video.removeEventListener("mouseup", onMouseUp);
+      video.removeEventListener("dblclick", onDblClick);
+      video.removeEventListener("contextmenu", onContextMenu);
+      video.removeEventListener("wheel", onWheel);
+    };
 
-      const rect = this.remoteVideo.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+    this._inputCaptureEnabled = true;
+  }
 
-      this.sendMouseEvent({
-        type: "mouseup",
-        x: x,
-        y: y,
-        button: event.button,
-        timestamp: Date.now(),
-      });
-    });
-
-    // Click events
-    this.remoteVideo.addEventListener("click", (event) => {
-      if (!this.mouseControlEnabled) return;
-
-      const rect = this.remoteVideo.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-
-      this.sendMouseEvent({
-        type: "click",
-        x: x,
-        y: y,
-        button: event.button,
-        timestamp: Date.now(),
-      });
-    });
-
-    this.remoteVideo.addEventListener("dblclick", (event) => {
-      if (!this.mouseControlEnabled) return;
-
-      event.preventDefault();
-
-      const rect = this.remoteVideo.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-
-      this.sendMouseEvent({
-        type: "dblclick",
-        x: x,
-        y: y,
-        button: event.button,
-        timestamp: Date.now(),
-      });
-    });
-
-    // Wheel events
-    this.remoteVideo.addEventListener("wheel", (event) => {
-      if (!this.mouseControlEnabled) return;
-
-      event.preventDefault();
-
-      this.sendMouseEvent({
-        type: "wheel",
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        deltaZ: event.deltaZ,
-        timestamp: Date.now(),
-      });
-    });
-
-    // Context menu (right-click menu)
-    this.remoteVideo.addEventListener("contextmenu", (event) => {
-      if (!this.mouseControlEnabled) return;
-      event.preventDefault();
-    });
+  async injectInput(msg) {
+    if (!window.electronAPI || !window.electronAPI.input) return;
+    const api = window.electronAPI.input;
+    const type = msg && msg.t;
+    try {
+      switch (type) {
+        case "move":
+          return await api.move(msg.x, msg.y);
+        case "down":
+          return await api.down(msg.b);
+        case "up":
+          return await api.up(msg.b);
+        case "dbl":
+          return await api.dbl(msg.b || 0);
+        case "ctx":
+          return await api.ctx();
+        case "wheel":
+          return await api.wheel(msg.dx || 0, msg.dy || 0);
+      }
+    } catch (err) {
+      console.error("IPC input injection failed", err);
+    }
   }
 
   updateConnectionStatus(status) {
@@ -544,189 +553,6 @@ class RemoteDeskApp {
     return true;
   }
 
-  // Data channel setup for mouse control
-  setupDataChannel() {
-    if (!this.dataChannel) return;
-
-    this.dataChannel.onopen = () => {
-      console.log("Mouse control data channel opened");
-      this.updateMouseControlStatus();
-    };
-
-    this.dataChannel.onclose = () => {
-      console.log("Mouse control data channel closed");
-      this.dataChannel = null;
-      this.updateMouseControlStatus();
-    };
-
-    this.dataChannel.onerror = (error) => {
-      console.error("Data channel error:", error);
-    };
-
-    this.dataChannel.onmessage = (event) => {
-      try {
-        const mouseEvent = JSON.parse(event.data);
-        this.handleMouseEvent(mouseEvent);
-      } catch (error) {
-        console.error("Failed to parse mouse event:", error);
-      }
-    };
-  }
-
-  // Handle incoming mouse events from remote control
-  async handleMouseEvent(mouseEvent) {
-    if (!this.mouseControlEnabled) return;
-
-    try {
-      switch (mouseEvent.type) {
-        case "mousemove":
-          await this.handleMouseMove(mouseEvent);
-          break;
-        case "mousedown":
-          await this.handleMouseDown(mouseEvent);
-          break;
-        case "mouseup":
-          await this.handleMouseUp(mouseEvent);
-          break;
-        case "click":
-          await this.handleMouseClick(mouseEvent);
-          break;
-        case "dblclick":
-          await this.handleMouseDoubleClick(mouseEvent);
-          break;
-        case "wheel":
-          await this.handleMouseWheel(mouseEvent);
-          break;
-        default:
-          console.warn("Unknown mouse event type:", mouseEvent.type);
-      }
-    } catch (error) {
-      console.error("Error handling mouse event:", error);
-    }
-  }
-
-  // Convert video coordinates to screen coordinates
-  convertVideoToScreenCoords(videoX, videoY) {
-    if (!this.remoteVideo) return { x: videoX, y: videoY };
-
-    const videoRect = this.remoteVideo.getBoundingClientRect();
-    const scaleX = this.localScreenSize.width / videoRect.width;
-    const scaleY = this.localScreenSize.height / videoRect.height;
-
-    return {
-      x: Math.round(videoX * scaleX),
-      y: Math.round(videoY * scaleY),
-    };
-  }
-
-  async handleMouseMove(event) {
-    const coords = this.convertVideoToScreenCoords(event.x, event.y);
-    await window.electronAPI.mouse.move(coords.x, coords.y);
-  }
-
-  async handleMouseDown(event) {
-    const button = this.mapButton(event.button);
-    await window.electronAPI.mouse.toggle(button, true);
-  }
-
-  async handleMouseUp(event) {
-    const button = this.mapButton(event.button);
-    await window.electronAPI.mouse.toggle(button, false);
-  }
-
-  async handleMouseClick(event) {
-    const button = this.mapButton(event.button);
-    await window.electronAPI.mouse.click(button, false);
-  }
-
-  async handleMouseDoubleClick(event) {
-    const button = this.mapButton(event.button);
-    await window.electronAPI.mouse.click(button, true);
-  }
-
-  async handleMouseWheel(event) {
-    // Convert wheel delta to scroll amount
-    const scrollX = event.deltaX > 0 ? 1 : event.deltaX < 0 ? -1 : 0;
-    const scrollY = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0;
-    await window.electronAPI.mouse.scroll(scrollX, scrollY);
-  }
-
-  mapButton(button) {
-    switch (button) {
-      case 0:
-        return "left";
-      case 1:
-        return "middle";
-      case 2:
-        return "right";
-      default:
-        return "left";
-    }
-  }
-
-  // Send mouse event through data channel
-  sendMouseEvent(event) {
-    if (!this.dataChannel || this.dataChannel.readyState !== "open") {
-      return;
-    }
-
-    try {
-      this.dataChannel.send(JSON.stringify(event));
-    } catch (error) {
-      console.error("Failed to send mouse event:", error);
-    }
-  }
-
-  // Toggle mouse control
-  toggleMouseControl() {
-    this.mouseControlEnabled = !this.mouseControlEnabled;
-    this.updateMouseControlStatus();
-    console.log(
-      "Mouse control:",
-      this.mouseControlEnabled ? "enabled" : "disabled"
-    );
-  }
-
-  updateMouseControlStatus() {
-    const status =
-      this.mouseControlEnabled &&
-      this.dataChannel &&
-      this.dataChannel.readyState === "open"
-        ? "Mouse control active"
-        : "Mouse control inactive";
-    this.updateConnectionStatus(status);
-    this.updateMouseControlButton();
-    this.updateRemoteVideoCursor();
-  }
-
-  updateMouseControlButton() {
-    const mouseControlButton = document.getElementById("mouseControlButton");
-    if (!mouseControlButton) return;
-
-    // Only show button when connected
-    if (this.peerConnection && this.remoteVideo) {
-      mouseControlButton.style.display = "inline-block";
-
-      if (this.mouseControlEnabled) {
-        mouseControlButton.textContent = "🖱️ Disable Mouse Control";
-        mouseControlButton.classList.add("active");
-      } else {
-        mouseControlButton.textContent = "🖱️ Enable Mouse Control";
-        mouseControlButton.classList.remove("active");
-      }
-    } else {
-      mouseControlButton.style.display = "none";
-    }
-  }
-
-  updateRemoteVideoCursor() {
-    if (this.remoteVideo) {
-      this.remoteVideo.style.cursor = this.mouseControlEnabled
-        ? "crosshair"
-        : "default";
-    }
-  }
-
   connectToUser(targetUserId) {
     if (!targetUserId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.updateConnectionStatus("Not connected to server");
@@ -752,9 +578,6 @@ class RemoteDeskApp {
     window.addEventListener("beforeunload", () => {
       if (this.localStream) {
         this.localStream.getTracks().forEach((track) => track.stop());
-      }
-      if (this.dataChannel) {
-        this.dataChannel.close();
       }
       if (this.ws) {
         this.ws.close();
@@ -825,15 +648,6 @@ class RemoteDeskApp {
         this.retryConnection();
       });
     }
-
-    // Mouse control button event listener
-    const mouseControlButton = document.getElementById("mouseControlButton");
-    if (mouseControlButton) {
-      mouseControlButton.addEventListener("click", () => {
-        this.toggleMouseControl();
-        this.updateMouseControlButton();
-      });
-    }
   }
 
   showConnectDialog() {
@@ -862,17 +676,6 @@ class RemoteDeskApp {
       this.localStream.getTracks().forEach((track) => track.stop());
       this.localStream = null;
     }
-
-    // Clean up remote video and mouse control
-    if (this.remoteVideo) {
-      this.remoteVideo.remove();
-      this.remoteVideo = null;
-    }
-
-    // Reset mouse control state
-    this.mouseControlEnabled = false;
-    this.dataChannel = null;
-    this.updateMouseControlButton();
 
     // Reconnect to server if needed
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {

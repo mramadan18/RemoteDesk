@@ -21,6 +21,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@nut-tree/nut-js": "^4.2.0",
     "express": "^5.1.0",
     "uuid": "^11.1.0",
     "ws": "^8.18.3"
@@ -36,6 +37,10 @@
     "appId": "com.remotedesk.app",
     "productName": "RemoteDesk",
     "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "**/node_modules/@nut-tree/**"
+    ],
     "files": [
       "app/**/*",
       "server/**/*",
