@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer, systemPreferences } = require("electron");
 const path = require("path");
 
 let mainWindow;
@@ -12,6 +12,7 @@ function createWindow() {
       contextIsolation: true,
       enableRemoteModule: false,
       preload: path.join(__dirname, "preload.js"),
+      webSecurity: false, // Required for screen sharing in some cases
     },
     icon: path.join(__dirname, "../../assets/icon.png"), // Add icon later if needed
     titleBarStyle: "default",
@@ -52,4 +53,31 @@ app.on("activate", () => {
 ipcMain.handle("get-user-id", () => {
   // Return a persistent user ID (could be stored in a file or generated based on system info)
   return require("crypto").randomBytes(4).toString("hex").toUpperCase();
+});
+
+// Handle screen sharing permissions
+ipcMain.handle("get-desktop-capturer-sources", async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen", "window"],
+      thumbnailSize: { width: 150, height: 150 }
+    });
+    return sources;
+  } catch (error) {
+    console.error("Error getting desktop sources:", error);
+    return [];
+  }
+});
+
+// Handle permission requests
+app.on("web-contents-created", (event, contents) => {
+  contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ["media", "desktop-capture"];
+
+    if (allowedPermissions.includes(permission)) {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
 });

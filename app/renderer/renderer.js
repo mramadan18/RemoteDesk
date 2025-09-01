@@ -14,10 +14,20 @@ class RemoteDeskApp {
     try {
       this.userId = await window.electronAPI.getUserId();
       this.displayUserId();
+
+      // Check screen sharing support
+      if (!this.isScreenSharingSupported()) {
+        this.updateConnectionStatus("⚠️ Screen sharing not supported in this environment");
+        console.warn("Screen sharing not supported");
+      } else {
+        console.log("Screen sharing is supported");
+      }
+
       this.connectToServer();
       this.setupEventListeners();
     } catch (error) {
       console.error("Failed to initialize app:", error);
+      this.updateConnectionStatus("❌ Initialization failed");
     }
   }
 
@@ -29,7 +39,7 @@ class RemoteDeskApp {
 
   connectToServer() {
     // Connect to the signaling server
-    this.ws = new WebSocket("wss://remotedesk-production.up.railway.app//ws");
+    this.ws = new WebSocket("wss://remotedesk-production.up.railway.app/ws");
 
     this.ws.onopen = () => {
       console.log("Connected to signaling server");
@@ -109,6 +119,14 @@ class RemoteDeskApp {
 
   async setupPeerConnection(peerId) {
     try {
+      // Check if screen sharing is supported before proceeding
+      if (!this.isScreenSharingSupported()) {
+        throw new Error("Screen sharing is not supported in this environment");
+      }
+
+      console.log("Setting up peer connection for peer:", peerId);
+      this.updateConnectionStatus("Setting up connection...");
+
       this.peerConnection = new RTCPeerConnection({
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
@@ -131,10 +149,53 @@ class RemoteDeskApp {
       };
 
       // Get screen sharing stream
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
+      let stream;
+      try {
+        // Check if screen sharing is supported
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          throw new Error("Screen sharing is not supported in this browser");
+        }
+
+        console.log("Requesting screen sharing...");
+        this.updateConnectionStatus("Requesting screen sharing permission...");
+
+        // Use getDisplayMedia with proper constraints
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            mediaSource: 'screen',
+            width: { ideal: 1920, max: 1920 },
+            height: { ideal: 1080, max: 1080 },
+            frameRate: { ideal: 30, max: 30 }
+          },
+          audio: false,
+        });
+
+        console.log("Successfully got screen sharing stream");
+
+        // Verify the stream has video tracks
+        if (!stream.getVideoTracks() || stream.getVideoTracks().length === 0) {
+          throw new Error("No video track found in screen sharing stream");
+        }
+
+      } catch (mediaError) {
+        console.error("Error getting media stream:", mediaError);
+
+        // Provide more specific error messages
+        let errorMessage = "Screen sharing failed: ";
+        if (mediaError.name === "NotAllowedError") {
+          errorMessage += "Permission denied. Please allow screen sharing when prompted.";
+        } else if (mediaError.name === "NotFoundError") {
+          errorMessage += "No screen found to share.";
+        } else if (mediaError.name === "NotSupportedError") {
+          errorMessage += "Screen sharing not supported in this environment.";
+        } else if (mediaError.name === "NotReadableError") {
+          errorMessage += "Screen is already being shared or not available.";
+        } else {
+          errorMessage += mediaError.message || "Unknown error occurred";
+        }
+
+        throw new Error(errorMessage);
+      }
 
       this.localStream = stream;
       stream.getTracks().forEach((track) => {
@@ -153,7 +214,31 @@ class RemoteDeskApp {
       this.updateConnectionStatus("Screen sharing active");
     } catch (error) {
       console.error("Error setting up peer connection:", error);
-      this.updateConnectionStatus("Connection failed");
+
+      // Provide user-friendly error messages
+      let userMessage = "Connection failed";
+      if (error.message.includes("Screen sharing")) {
+        userMessage = error.message; // Already formatted error message
+      } else if (error.message.includes("Permission denied")) {
+        userMessage = "❌ Permission denied. Please allow screen sharing and try again.";
+      } else if (error.message.includes("network")) {
+        userMessage = "❌ Network error. Check your connection and try again.";
+      } else {
+        userMessage = `❌ ${error.message || "Unknown connection error"}`;
+      }
+
+      this.updateConnectionStatus(userMessage);
+
+      // Clean up any partial connection
+      if (this.peerConnection) {
+        this.peerConnection.close();
+        this.peerConnection = null;
+      }
+
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => track.stop());
+        this.localStream = null;
+      }
     }
   }
 
@@ -225,7 +310,32 @@ class RemoteDeskApp {
 
   updateConnectionStatus(status) {
     const statusElement = document.getElementById("connectionStatus");
+    const retryButton = document.getElementById("retryButton");
+
     statusElement.textContent = status;
+
+    // Show retry button for error states
+    if (status.includes("❌") || status.includes("failed") || status.includes("not supported")) {
+      retryButton.style.display = "inline-block";
+    } else {
+      retryButton.style.display = "none";
+    }
+  }
+
+  isScreenSharingSupported() {
+    // Check if the browser supports getDisplayMedia
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      console.error("getDisplayMedia not supported");
+      return false;
+    }
+
+    // Check if we're in a secure context (required for screen sharing)
+    if (!window.isSecureContext && location.protocol !== 'file:') {
+      console.error("Screen sharing requires a secure context (HTTPS)");
+      return false;
+    }
+
+    return true;
   }
 
   connectToUser(targetUserId) {
@@ -312,6 +422,14 @@ class RemoteDeskApp {
         }
       });
     }
+
+    // Retry button event listener
+    const retryButton = document.getElementById("retryButton");
+    if (retryButton) {
+      retryButton.addEventListener("click", () => {
+        this.retryConnection();
+      });
+    }
   }
 
   showConnectDialog() {
@@ -324,6 +442,29 @@ class RemoteDeskApp {
 
     // Show dialog
     dialog.classList.add("show");
+  }
+
+  retryConnection() {
+    console.log("Retrying connection...");
+    this.updateConnectionStatus("Retrying...");
+
+    // Clean up any existing connections
+    if (this.peerConnection) {
+      this.peerConnection.close();
+      this.peerConnection = null;
+    }
+
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => track.stop());
+      this.localStream = null;
+    }
+
+    // Reconnect to server if needed
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.connectToServer();
+    } else {
+      this.updateConnectionStatus("Ready - waiting for connections");
+    }
   }
 
   hideConnectDialog() {

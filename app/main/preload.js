@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld("electronAPI", {
   getUserId: () => ipcRenderer.invoke("get-user-id"),
+  getDesktopCapturerSources: () => ipcRenderer.invoke("get-desktop-capturer-sources"),
   onConnectionRequest: (callback) =>
     ipcRenderer.on("connection-request", callback),
   onConnectionEstablished: (callback) =>
